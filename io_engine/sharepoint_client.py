@@ -8,11 +8,19 @@ from config import settings
 
 class SharePointClient:
     def __init__(self):
-        # Dùng trực tiếp settings.SITE_URL
         self.site_url = settings.SITE_URL
         self.auth_dir = settings.BASE_DIR / "workspace" / ".auth"
         self.auth_dir.mkdir(parents=True, exist_ok=True)
         self.session_file = self.auth_dir / "state.json"
+
+    def _cleanup_expired_session(self, reason: str = ""):
+        """Helper to automatically remove expired or invalid state.json session file."""
+        if self.session_file.exists():
+            try:
+                self.session_file.unlink()
+                print(f"🧹 Auto-deleted expired/invalid session file (state.json). {reason}")
+            except Exception as e:
+                print(f"⚠️ Failed to delete state.json: {e}")
 
     def _ensure_authenticated(self, p):
         """Check authentication session. Trigger browser login if session is missing."""
@@ -20,7 +28,7 @@ class SharePointClient:
             print("🔑 Found saved Session, reusing...")
             return
 
-        print("🌐 No Session found! Opening browser for SharePoint login...")
+        print("🌐 No valid Session found! Opening browser for SharePoint login...")
         browser = p.chromium.launch(headless=False)
         context = browser.new_context()
         page = context.new_page()
@@ -37,6 +45,7 @@ class SharePointClient:
             context.storage_state(path=str(self.session_file))
             print("✅ Authentication successful & saved new Session to workspace/.auth/state.json!")
         except Exception:
+            self._cleanup_expired_session("Timeout during login process.")
             raise TimeoutError("❌ Exceeded 2 minutes without completing login/2FA on phone!")
         finally:
             browser.close()
@@ -45,11 +54,10 @@ class SharePointClient:
         """Check if SharePoint returned HTML (expired session) -> Delete session and raise error"""
         content_head = content_bytes[:500].decode("utf-8", errors="ignore").lower()
         if "<!doctype html" in content_head or "<html" in content_head:
-            if self.session_file.exists():
-                self.session_file.unlink()
+            self._cleanup_expired_session("SharePoint returned HTML login page instead of data.")
             raise PermissionError(
                 f"\n❌ ERROR: SESSION EXPIRED! SharePoint refused to serve [{file_name}] and forced login.\n"
-                f"💡 Old Session deleted. PLEASE RE-RUN THE COMMAND ON n8n to open browser again!"
+                f"💡 Old Session auto-deleted. Please RE-RUN the command on n8n to open browser again!"
             )
 
     def download_file_by_path(self, server_relative_url: str, output_dir: Path) -> Path:
@@ -83,6 +91,8 @@ class SharePointClient:
                 return dest_file
             else:
                 print(f"   ❌ SHAREPOINT API ERROR ({response.status}): Failed to download file.")
+                if response.status in [401, 403]:
+                    self._cleanup_expired_session(f"SharePoint API returned HTTP {response.status}.")
                 return None
 
     def download_folder(self, folder_relative_path: str, output_dir: Path) -> list[Path]:
@@ -107,6 +117,8 @@ class SharePointClient:
 
             if response.status != 200:
                 print(f"❌ SHAREPOINT API ERROR: Status {response.status}")
+                if response.status in [401, 403]:
+                    self._cleanup_expired_session(f"SharePoint API returned HTTP {response.status}.")
                 return []
 
             body_bytes = response.body()
@@ -116,9 +128,7 @@ class SharePointClient:
                 data = response.json()
             except Exception as e:
                 print(f"❌ Failed to parse JSON from SharePoint response: {e}")
-                if self.session_file.exists():
-                    self.session_file.unlink()
-                    print("💡 Deleted invalid session file. Please rerun to re-authenticate.")
+                self._cleanup_expired_session("Invalid JSON payload received.")
                 return []
 
             files_list = data.get("d", {}).get("results", [])
@@ -145,9 +155,11 @@ class SharePointClient:
                     print(f"   ✅ Saved file: {f_name}")
                 else:
                     print(f"   ❌ Error downloading file {f_name}: Status {file_resp.status}")
+                    if file_resp.status in [401, 403]:
+                        self._cleanup_expired_session(f"File download returned HTTP {file_resp.status}.")
 
             return downloaded_files
 
-    # Aliases for backward compatibility with different function naming formats
+    # Aliases for backward compatibility
     download_folder_by_path = download_folder
     download_file = download_file_by_path

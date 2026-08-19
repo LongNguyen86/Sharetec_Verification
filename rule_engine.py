@@ -47,10 +47,17 @@ def parse_section_rule(raw_notes: str) -> dict:
     join_rule_model = None
 
     filter_match = re.search(
-        r"(?:ONLY\s+CONSIDERED\s+.*?\s+IF|IF)\s+(COLUMN\s+[A-Za-z0-9_]+\s*=\s*[^\|\n]+)",
+        r"((?:ONLY\s+CONSIDERED\s+.*?|ONLY\s+CREATE\s+.*?|DO\s+NOT\s+CREATE\s+.*?|IF\s+COLUMN\s+[A-Za-z0-9_]+\s*=\s*NULL\s+DO\s+NOT\s+CREATE\s+.*?|IF\s+COLUMN\s+.*?)(?:COLUMN\s+[A-Za-z0-9_]+\s*[^\|\n]+))",
         raw_notes,
         re.IGNORECASE,
     )
+    if not filter_match:
+        filter_match = re.search(
+            r"(COLUMN\s+[A-Za-z0-9_]+\s*(?:=|<|>|<>|!=|BEGINS|STARTS|IS)\s*[^\|\n]+)",
+            raw_notes,
+            re.IGNORECASE,
+        )
+
     if filter_match:
         filter_cond = clean_excel_text(filter_match.group(1).split("\n")[0].split("|")[0])
 
@@ -98,7 +105,7 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
     notes = clean_excel_text(notes)
     notes_upper = notes.upper()
 
-    # Case 1: Empty mapping (If Column is empty AND Notes are empty -> NO_MAPPING)
+    # Case 1: Empty mapping
     if not col and not notes:
         no_map = NoMappingRuleDSL()
         return {
@@ -108,7 +115,7 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
             "status": "AUTO_PARSED",
         }
 
-    # Case 2: Direct Mapping (Has Column AND no conditional/logic keywords in notes)
+    # Case 2: Direct Mapping
     has_conditional_keywords = any(
         kw in notes_upper for kw in ["IF COLUMN", "IF ", "ASSIGN", "MATRIX", "LOOKUP", "WHEN", "ACCUMULATE"]
     )
@@ -148,7 +155,7 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
             }
 
     # Case 4: Matrix Lookup
-    if "MATRIX" in notes_upper or "USING MATRIX" in notes_upper or "USE MATRIX" in notes_upper or "LOOKUP" in notes_upper:
+    if any(k in notes_upper for k in ["MATRIX", "LOOKUP"]):
         match = re.search(r"ASSIGN\s+([A-Za-z0-9_\-\.]+)", notes, re.IGNORECASE)
         ref = match.group(1) if match else "MATRIX_LOOKUP"
 
@@ -165,16 +172,33 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
             "status": "AUTO_PARSED",
         }
 
-    # Case 5: Constant Assignment
+    # Case 5: Constant Assignment OR Cross-Table Field Reference
     if notes_upper.startswith("ASSIGN") and "IF COLUMN" not in notes_upper:
         val = re.sub(r"^ASSIGN\s+(ALL\s+)?", "", notes, flags=re.IGNORECASE).strip()
-        const_dsl = ConstantRuleDSL(value=val)
-        return {
-            "rule_type": "CONSTANT",
-            "dsl_obj": const_dsl,
-            "dsl_readable": f"CONST('{val}')",
-            "status": "AUTO_PARSED",
-        }
+        is_field_ref = bool(
+            re.match(
+                r"^(MB|DP|LN|DP-TYPE|LN-TYPE|CU|CHECK_ACCOUNT_HOLDS|SAVINGS_ACCOUNTS)\.[A-Za-z0-9_\-]+",
+                val,
+                re.IGNORECASE,
+            )
+        )
+
+        if is_field_ref:
+            unparsed_dsl = UnparsedRuleDSL(raw_notes=notes)
+            return {
+                "rule_type": "CONDITIONAL" if col else "UNPARSED",
+                "dsl_obj": unparsed_dsl,
+                "dsl_readable": f"REF('{val}')",
+                "status": "AUTO_PARSED" if col else "NEEDS_REVIEW",
+            }
+        else:
+            const_dsl = ConstantRuleDSL(value=val)
+            return {
+                "rule_type": "CONSTANT",
+                "dsl_obj": const_dsl,
+                "dsl_readable": f"CONST('{val}')",
+                "status": "AUTO_PARSED",
+            }
 
     # Case 6: Complex or Multi-IF free-text -> Pass to LLM / AI Engine
     unparsed_dsl = UnparsedRuleDSL(raw_notes=notes)
@@ -252,7 +276,7 @@ def process_mapping_sheet(
                 print(f"📌 Scanning Data Section: [{current_section}]")
 
         # Save _SECTION_RULE_ if Filter or Join is present
-        if "ONLY CONSIDERED" in row_str.upper() or "LINK " in row_str.upper():
+        if any(kw in row_str.upper() for kw in ["ONLY CONSIDERED", "ONLY CREATE", "DO NOT CREATE", "LINK "]):
             parsed_sec = parse_section_rule(row_str)
             sec_dsl_obj: SectionRuleDSL = parsed_sec["dsl_obj"]
 
