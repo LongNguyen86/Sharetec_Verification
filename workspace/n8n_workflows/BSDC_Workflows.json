@@ -1,0 +1,212 @@
+{
+  "name": "BSDC_Workflows",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.api_base_url }}api/v1/fetch-input-files",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "cu_id",
+              "value": "={{ $json.cu_id }}"
+            },
+            {
+              "name": "mapping_path",
+              "value": "={{ $json.mapping_path }}"
+            },
+            {
+              "name": "raw_data_path",
+              "value": "={{ $json.raw_data_path }}"
+            },
+            {
+              "name": "matrix_path",
+              "value": "={{ $json.matrix_path }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "2721873a-86b5-4c38-9c84-36f2a37cad7f",
+      "name": "Fetch Input Files",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/convert-to-csv",
+        "sendBody": true,
+        "specifyBody": "=json",
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "jsonBody": "={\n  \"cu_id\": \"={{ $('Set Path').item.json.cu_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "96d5f41b-0813-4e4c-85c2-c0613be23bae",
+      "name": "Convert to CSV"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/validate-mapping",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"cu_id\": \"={{ $('Set Path').item.json.cu_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "id": "7636a26c-4367-446d-bc28-2bc0061147f4",
+      "name": "Validate the mapping file"
+    },
+    {
+      "parameters": {
+        "formTitle": "BSDC Data Ingest System",
+        "formDescription": "Enter the CU Name to proceed with downloading the file and validating the data.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "CU Name",
+              "placeholder": "Input CU Name",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "1b4399bc-c89c-4d1e-b5cb-ea7e371a2360",
+      "name": "On form submission",
+      "webhookId": "4c651dec-dd26-4ee7-bcc0-38bb755d0060"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "4057f9f3-da3f-4b53-a23b-a7c0516c1bb1",
+              "name": "mapping_path",
+              "value": "=Shared Documents/1. Conversion & Mergers Projects/26 07 {{ $json['CU Name'] }} Conversion/07 Team Folders/QA Team Folder",
+              "type": "string"
+            },
+            {
+              "id": "6520602c-6aba-457f-b7a9-57e62508bc0b",
+              "name": "raw_data_path",
+              "value": "=Shared Documents/1. Conversion & Mergers Projects/26 07 {{ $json['CU Name'] }} Conversion/02 Data & Reports - Training/1st Data Cut 3-31-26/CSV Files",
+              "type": "string"
+            },
+            {
+              "id": "babf3175-e979-49f8-9d99-ddec96233ceb",
+              "name": "matrix_path",
+              "value": "=Shared Documents/1. Conversion & Mergers Projects/26 07 {{ $json['CU Name'] }} Conversion/03 Info From CU/03 Matrix",
+              "type": "string"
+            },
+            {
+              "id": "013b4afa-db27-4870-a5b4-2d49e79db87d",
+              "name": "cu_id",
+              "value": "={{ $json['CU Name'].toUpperCase() }}",
+              "type": "string"
+            },
+            {
+              "id": "71dd3242-fe57-4824-aa3b-c94b3e4e7160",
+              "name": "api_base_url",
+              "value": "http://127.0.0.1:8000/",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        0
+      ],
+      "id": "e652517b-003c-41b5-91ed-06b814163f6e",
+      "name": "Set Path"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Fetch Input Files": {
+      "main": [
+        [
+          {
+            "node": "Convert to CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to CSV": {
+      "main": [
+        [
+          {
+            "node": "Validate the mapping file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Set Path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Path": {
+      "main": [
+        [
+          {
+            "node": "Fetch Input Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "cd6303ae-d0c9-4f83-ac8e-77b968f7aa4e",
+  "meta": {
+    "instanceId": "7e4ab5b15df44e4fdbde799614bf980ec37978041426198882a1d59e9c97067d"
+  },
+  "id": "apl1pnaRLWUzpB3D",
+  "tags": []
+}

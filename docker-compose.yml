@@ -1,0 +1,11 @@
+services:
+  bsdc-app:
+    build: .
+    container_name: bsdc_ingest_engine
+    ports:
+      - "5678:5678"
+    environment:
+      - NODES_EXCLUDE=[]
+    volumes:
+      - .:/home/node/app
+    restart: unless-stopped

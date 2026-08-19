@@ -1,0 +1,38 @@
+# Môi trường ảo & Python Cache
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# File cấu hình chứa mật khẩu / API Key
+.env
+
+# Thư mục dữ liệu tạm / Output / CSV / Ingest
+workspace/output/*
+workspace/raw_data/*
+workspace/ingest/*
+workspace/csv/*
+workspace/reports/*
+workspace/qa_reports/*
+workspace/.auth/*
+
+# SQLite DB (tự tạo bằng init_db.py)
+workspace/rules.db
+workspace/rules.db-journal
+workspace/rules.db-wal
+
+# File rác hệ thống / Editor
+.DS_Store
+.vscode/
+.idea/
+
+scan_vn_text.py
+translate_all.py
+
+# Giữ lại file cấu trúc .gitkeep
+!workspace/**/.gitkeep
+
+# Docker Image Export
+*.tar
+*.tar.gz
+*.taz

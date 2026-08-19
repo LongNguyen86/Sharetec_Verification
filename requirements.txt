@@ -1,0 +1,11 @@
+Office365-REST-Python-Client>=2.5.0
+python-dotenv>=1.0.0
+playwright
+polars
+openpyxl
+fastexcel
+python-calamine
+pandas
+pydantic
+fastapi
+uvicorn
