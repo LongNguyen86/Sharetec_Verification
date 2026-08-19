@@ -8,7 +8,6 @@ from config import settings
 
 class SharePointClient:
     def __init__(self):
-        # Dùng trực tiếp settings.SITE_URL
         self.site_url = settings.SITE_URL
         self.auth_dir = settings.BASE_DIR / "workspace" / ".auth"
         self.auth_dir.mkdir(parents=True, exist_ok=True)
