@@ -49,7 +49,7 @@
             {}
           ]
         },
-        "jsonBody": "={\n  \"cu_id\": \"={{ $('Set Path').item.json.cu_id }}\"\n}",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Fetch Input Files').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -67,7 +67,7 @@
         "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/validate-mapping",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"cu_id\": \"={{ $('Set Path').item.json.cu_id }}\"\n}",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Fetch Input Files').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
