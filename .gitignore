@@ -1,13 +1,24 @@
-# Môi trường ảo & Python Cache
+# Virtual Environment & Python Cache
 venv/
 .venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
 
-# File cấu hình chứa mật khẩu / API Key
+# Build & Package Artifacts (for pyproject.toml / pip install -e .)
+*.egg-info/
+dist/
+build/
+
+# Environment Variables & Keys
 .env
+.env.*
+!.env.example
 
-# Thư mục dữ liệu tạm / Output / CSV / Ingest
+# Workspace Data & Dynamic Runs (New Dynamic Architecture)
+workspace/runs/*
 workspace/output/*
 workspace/raw_data/*
 workspace/ingest/*
@@ -16,23 +27,22 @@ workspace/reports/*
 workspace/qa_reports/*
 workspace/.auth/*
 
-# SQLite DB (tự tạo bằng init_db.py)
-workspace/rules.db
-workspace/rules.db-journal
-workspace/rules.db-wal
+# SQLite Database & Journal/WAL Logs
+*.db
+*.db-journal
+*.db-wal
+workspace/*.db*
 
-# File rác hệ thống / Editor
+# OS & Editor Files
 .DS_Store
+Thumbs.db
 .vscode/
 .idea/
 
-scan_vn_text.py
-translate_all.py
-
-# Giữ lại file cấu trúc .gitkeep
-!workspace/**/.gitkeep
-
-# Docker Image Export
+# Docker Image & Archives
 *.tar
 *.tar.gz
 *.taz
+
+# Preserve directory structure
+!workspace/**/.gitkeep
