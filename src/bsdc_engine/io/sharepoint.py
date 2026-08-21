@@ -160,3 +160,69 @@ class SharePointClient:
                 total_downloaded.extend(dls)
 
         return total_downloaded
+
+    def upload_file(self, local_file_path: Path, target_folder_path: str) -> bool:
+        """Upload a local file to a specified SharePoint folder path using FormDigest validation."""
+        local_file_path = Path(local_file_path)
+        if not local_file_path.exists():
+            logger.error(f"Local file to upload does not exist: {local_file_path}")
+            return False
+
+        folder_clean = clean_sharepoint_path(target_folder_path)
+        encoded_folder = urllib.parse.quote(folder_clean)
+        file_name = local_file_path.name
+        encoded_filename = urllib.parse.quote(file_name)
+
+        context_info_url = f"{self.site_url}/_api/contextinfo"
+        upload_endpoint = (
+            f"{self.site_url}/_api/web/getfolderbyserverrelativeurl('{encoded_folder}')"
+            f"/files/add(url='{encoded_filename}',overwrite=true)"
+        )
+
+        with sync_playwright() as p:
+            self._ensure_authenticated(p)
+            request_context = p.request.new_context(storage_state=str(self.session_file))
+
+            # 1. Obtain X-RequestDigest token required for POST requests in SharePoint
+            digest_resp = request_context.post(
+                context_info_url,
+                headers={"Accept": "application/json;odata=verbose"},
+                timeout=30000,
+            )
+
+            request_digest = ""
+            if digest_resp.status == 200:
+                try:
+                    digest_data = digest_resp.json()
+                    request_digest = (
+                        digest_data.get("d", {})
+                        .get("GetContextWebInformation", {})
+                        .get("FormDigestValue", "")
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to parse FormDigestValue: {e}")
+
+            # 2. Upload file with X-RequestDigest header
+            headers = {
+                "Accept": "application/json;odata=verbose",
+                "Content-Type": "application/octet-stream",
+            }
+            if request_digest:
+                headers["X-RequestDigest"] = request_digest
+
+            file_bytes = local_file_path.read_bytes()
+            response = request_context.post(
+                upload_endpoint,
+                data=file_bytes,
+                headers=headers,
+                timeout=300000,
+            )
+
+            if response.status in [200, 201]:
+                logger.info(f"Successfully uploaded [{file_name}] to SharePoint: {target_folder_path}")
+                return True
+            else:
+                logger.error(f"Failed to upload file to SharePoint. Status: {response.status}")
+                if response.status in [401, 403]:
+                    self._cleanup_expired_session(f"Upload API returned HTTP {response.status}.")
+                return False 
