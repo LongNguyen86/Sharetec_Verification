@@ -11,6 +11,8 @@ from src.bsdc_engine.text import clean_sharepoint_path
 
 logger = get_logger(__name__)
 
+ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xlsm", ".xls"}
+
 
 class SharePointClient:
     def __init__(self):
@@ -60,6 +62,12 @@ class SharePointClient:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         file_name = Path(server_relative_url).name
+        ext = Path(file_name).suffix.lower()
+
+        # Skip non-data files such as .doc, .docx, .txt, or temp files
+        if file_name.startswith("~$") or ext not in ALLOWED_EXTENSIONS:
+            logger.info(f"Skipping non-data file: {file_name}")
+            return None
 
         with sync_playwright() as p:
             self._ensure_authenticated(p)
@@ -113,6 +121,13 @@ class SharePointClient:
             downloaded_files = []
             for file_info in files_list:
                 f_name = file_info["Name"]
+                ext = Path(f_name).suffix.lower()
+
+                # Skip non-data files inside folder
+                if f_name.startswith("~$") or ext not in ALLOWED_EXTENSIONS:
+                    logger.info(f"Skipping non-data file inside folder: {f_name}")
+                    continue
+
                 f_encoded = urllib.parse.quote(file_info["ServerRelativeUrl"])
                 file_val_url = f"{self.site_url}/_api/web/getfilebyserverrelativeurl('{f_encoded}')/$value"
 

@@ -17,7 +17,8 @@ class ValidateRequest(BaseModel):
 def validate_mapping(payload: ValidateRequest):
     try:
         ws = RunWorkspace(run_id=payload.run_id)
-        validator = MappingValidator(raw_dir=ws.raw_dir, output_report_dir=ws.qa_reports_dir)
+        # Point raw_dir to ws.mapping_dir where mapping files are stored
+        validator = MappingValidator(raw_dir=ws.mapping_dir, output_report_dir=ws.qa_reports_dir)
         is_passed, errors = validator.validate()
 
         files_validated = [f.name for f in validator.mapping_files]

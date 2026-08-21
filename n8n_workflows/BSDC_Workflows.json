@@ -150,6 +150,62 @@
       ],
       "id": "e652517b-003c-41b5-91ed-06b814163f6e",
       "name": "Set Path"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/rules/parse",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Fetch Input Files').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "id": "2dc81ba4-51e8-4b64-afbd-5f146ffdda64",
+      "name": "Parse Rules"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/rules/ai-parse",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Fetch Input Files').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        0
+      ],
+      "id": "d1b23007-06ec-4294-b974-35a11c6c23a6",
+      "name": "AI Parse"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/rules/export-verification-report",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Fetch Input Files').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1260,
+        280
+      ],
+      "id": "8fe52cd7-5ac9-44a1-98e6-9fca8eb56975",
+      "name": "Rule Verification Report"
     }
   ],
   "pinData": {},
@@ -197,13 +253,46 @@
           }
         ]
       ]
+    },
+    "Validate the mapping file": {
+      "main": [
+        [
+          {
+            "node": "Parse Rules",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Rules": {
+      "main": [
+        [
+          {
+            "node": "AI Parse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Parse": {
+      "main": [
+        [
+          {
+            "node": "Rule Verification Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "cd6303ae-d0c9-4f83-ac8e-77b968f7aa4e",
+  "versionId": "8d96671e-5a6b-4ad4-8da0-ef430e357888",
   "meta": {
     "instanceId": "7e4ab5b15df44e4fdbde799614bf980ec37978041426198882a1d59e9c97067d"
   },
