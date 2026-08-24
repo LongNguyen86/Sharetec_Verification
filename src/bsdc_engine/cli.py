@@ -116,13 +116,18 @@ def main():
         from src.bsdc_engine.rules.decisions import apply_qa_decisions
         report_path = ws.qa_reports_dir / args.report_file
         apply_qa_decisions(reviewed_report_path=report_path)
-        
-    elif args.command == "generate":
-        from src.bsdc_engine.generate.builder import TransformationBuilder
-        builder = TransformationBuilder(raw_data_dir=ws.csv_dir, output_dir=ws.reconciliation_dir)
-        results = builder.generate_all(cu_id=getattr(args, "cu_id", None))
-        print(f"✅ Transformation completed. Generated {len(results)} tables.")
 
+    elif args.command == "generate":
+        from src.bsdc_engine.generate.builders import TransformationBuilder
+        out_dir = getattr(ws, "transformed_dir", ws.reconciliation_dir)
+        
+        builder = TransformationBuilder(
+            raw_data_dir=ws.csv_dir,
+            output_dir=out_dir,
+            db_path=getattr(ws, "db_path", None)
+        )
+        results = builder.generate_all(cu_id=getattr(args, "cu_id", None))
+        print(f"✅ Transformation completed. Generated {len(results)} tables into {out_dir}.")
 
 if __name__ == "__main__":
     main()
