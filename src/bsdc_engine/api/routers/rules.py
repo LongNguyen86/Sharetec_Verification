@@ -1,3 +1,4 @@
+import urllib.parse
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -9,6 +10,7 @@ from src.bsdc_engine.report.rule_verification import export_rule_verification_re
 from src.bsdc_engine.rules.decisions import apply_qa_decisions
 from src.bsdc_engine.logging import get_logger
 from src.bsdc_engine.io.sharepoint import SharePointClient
+from src.bsdc_engine.text import clean_sharepoint_path
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/rules", tags=["Rule Engine"])
@@ -27,6 +29,7 @@ class AIParseRequest(BaseModel):
 class ExportReportRequest(BaseModel):
     run_id: str
     cu_id: str
+    sharepoint_target_path: str | None = None
 
 
 class ApplyQARequest(BaseModel):
@@ -34,10 +37,6 @@ class ApplyQARequest(BaseModel):
     report_filename: str
     sharepoint_source_path: str | None = None
 
-class ExportReportRequest(BaseModel):
-    run_id: str
-    cu_id: str
-    sharepoint_target_path: str | None = None
 
 @router.post("/parse")
 def parse_rules(payload: ParseRulesRequest):
@@ -106,18 +105,32 @@ def apply_qa(payload: ApplyQARequest):
         ws = RunWorkspace(run_id=payload.run_id)
         report_file = ws.qa_reports_dir / payload.report_filename
 
-        # Re-download the updated report from SharePoint if path provided
         if payload.sharepoint_source_path:
             client = SharePointClient()
-            sp_folder = payload.sharepoint_source_path.strip()
-            if not sp_folder.startswith("/"):
-                sp_folder = "/" + sp_folder
 
-            sp_file_path = f"{sp_folder.rstrip('/')}/{payload.report_filename}"
+            raw_path = clean_sharepoint_path(payload.sharepoint_source_path)
+            site_prefix = urllib.parse.urlparse(client.site_url).path.rstrip("/")
+
+            if not raw_path.startswith("/"):
+                raw_path = "/" + raw_path
+
+            if site_prefix and not raw_path.startswith(site_prefix):
+                server_rel_folder = f"{site_prefix}{raw_path}"
+            else:
+                server_rel_folder = raw_path
+
+            sp_file_path = f"{server_rel_folder.rstrip('/')}/{payload.report_filename}"
             logger.info(
                 f"Downloading reviewed report from SharePoint: {sp_file_path}"
             )
-            client.download_file_by_path(sp_file_path, ws.qa_reports_dir)
+
+            downloaded = client.download_file_by_path(
+                sp_file_path, ws.qa_reports_dir
+            )
+            if not downloaded:
+                raise Exception(
+                    f"Failed to download file from SharePoint: {sp_file_path}"
+                )
 
         stats = apply_qa_decisions(reviewed_report_path=report_file)
         return {"status": "success", "run_id": ws.run_id, "stats": stats}

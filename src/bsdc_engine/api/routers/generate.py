@@ -7,7 +7,7 @@ from src.bsdc_engine.logging import get_logger
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/generate", tags=["Data Generation"])
+router = APIRouter(prefix="/api/v1/generate", tags=["Data Generation"])
 
 
 class GenerateDataRequest(BaseModel):
@@ -32,9 +32,7 @@ def generate_transformed_data(payload: GenerateDataRequest):
         )
 
         # Execute data transformation across all mapped sections
-        results = builder.generate_all(
-            cu_id=payload.cu_id, sheet_name=payload.sheet_name
-        )
+        results = builder.generate_all(cu_id=payload.cu_id)
 
         logger.info(
             f"Successfully generated {len(results)} transformed CSV files for run_id: {payload.run_id}"
