@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from src.bsdc_engine.api.routers import ingest, convert, validate, rules
+from src.bsdc_engine.api.routers import ingest, convert, validate, rules, generate
 
 app = FastAPI(
     title="BSDC Ingest Engine API",
@@ -11,6 +11,8 @@ app.include_router(ingest.router)
 app.include_router(convert.router)
 app.include_router(validate.router)
 app.include_router(rules.router)
+app.include_router(generate.router)  # Registered new generate router
+
 
 @app.get("/")
 def root():
