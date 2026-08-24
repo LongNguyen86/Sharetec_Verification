@@ -76,7 +76,15 @@ class SharePointClient:
             encoded_url = urllib.parse.quote(server_relative_url)
             api_endpoint = f"{self.site_url}/_api/web/getfilebyserverrelativeurl('{encoded_url}')/$value"
 
-            response = request_context.get(api_endpoint, headers={"Accept": "application/json;odata=verbose"}, timeout=300000)
+            # Ép SharePoint không dùng dữ liệu cache cũ bằng các header chống cache
+            headers = {
+                "Accept": "application/json;odata=verbose",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            }
+
+            response = request_context.get(api_endpoint, headers=headers, timeout=300000)
 
             if response.status == 200:
                 file_bytes = response.body()
@@ -101,7 +109,15 @@ class SharePointClient:
             encoded_folder = urllib.parse.quote(folder_relative_path)
             api_endpoint = f"{self.site_url}/_api/web/getfolderbyserverrelativeurl('{encoded_folder}')/files"
 
-            response = request_context.get(api_endpoint, headers={"Accept": "application/json;odata=verbose"})
+            response = request_context.get(
+                api_endpoint,
+                headers={
+                    "Accept": "application/json;odata=verbose",
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                },
+            )
 
             if response.status != 200:
                 if response.status in [401, 403]:
@@ -131,7 +147,15 @@ class SharePointClient:
                 f_encoded = urllib.parse.quote(file_info["ServerRelativeUrl"])
                 file_val_url = f"{self.site_url}/_api/web/getfilebyserverrelativeurl('{f_encoded}')/$value"
 
-                file_resp = request_context.get(file_val_url, timeout=300000)
+                file_resp = request_context.get(
+                    file_val_url,
+                    headers={
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                        "Pragma": "no-cache",
+                        "Expires": "0",
+                    },
+                    timeout=300000,
+                )
                 if file_resp.status == 200:
                     f_bytes = file_resp.body()
                     self._check_html_response(f_bytes, f_name)
@@ -225,4 +249,4 @@ class SharePointClient:
                 logger.error(f"Failed to upload file to SharePoint. Status: {response.status}")
                 if response.status in [401, 403]:
                     self._cleanup_expired_session(f"Upload API returned HTTP {response.status}.")
-                return False 
+                return False
