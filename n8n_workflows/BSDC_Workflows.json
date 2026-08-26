@@ -6,26 +6,8 @@
         "method": "POST",
         "url": "={{ $json.api_base_url }}api/v1/fetch-input-files",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "cu_id",
-              "value": "={{ $json.cu_id }}"
-            },
-            {
-              "name": "mapping_path",
-              "value": "={{ $json.mapping_path }}"
-            },
-            {
-              "name": "raw_data_path",
-              "value": "={{ $json.raw_data_path }}"
-            },
-            {
-              "name": "matrix_path",
-              "value": "={{ $json.matrix_path }}"
-            }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"cu_id\": \"{{ $json.cu_id }}\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -110,24 +92,6 @@
         "assignments": {
           "assignments": [
             {
-              "id": "4057f9f3-da3f-4b53-a23b-a7c0516c1bb1",
-              "name": "mapping_path",
-              "value": "=Shared Documents/1. Conversion & Mergers Projects/26 07 {{ $json['CU Name'] }} Conversion/07 Team Folders/QA Team Folder",
-              "type": "string"
-            },
-            {
-              "id": "6520602c-6aba-457f-b7a9-57e62508bc0b",
-              "name": "raw_data_path",
-              "value": "=Shared Documents/1. Conversion & Mergers Projects/26 07 {{ $json['CU Name'] }} Conversion/02 Data & Reports - Training/1st Data Cut 3-31-26/CSV Files",
-              "type": "string"
-            },
-            {
-              "id": "babf3175-e979-49f8-9d99-ddec96233ceb",
-              "name": "matrix_path",
-              "value": "=Shared Documents/1. Conversion & Mergers Projects/26 07 {{ $json['CU Name'] }} Conversion/03 Info From CU/03 Matrix",
-              "type": "string"
-            },
-            {
               "id": "013b4afa-db27-4870-a5b4-2d49e79db87d",
               "name": "cu_id",
               "value": "={{ $json['CU Name'].toUpperCase() }}",
@@ -184,8 +148,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1300,
-        0
+        0,
+        220
       ],
       "id": "d1b23007-06ec-4294-b974-35a11c6c23a6",
       "name": "AI Parse"
@@ -196,14 +160,14 @@
         "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/rules/export-verification-report",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Fetch Input Files').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\",\n  \"sharepoint_target_path\": \"{{ $('Set Path').item.json.mapping_path }}\"\n}",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Fetch Input Files').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1180,
-        200
+        220,
+        220
       ],
       "id": "8fe52cd7-5ac9-44a1-98e6-9fca8eb56975",
       "name": "Rule Verification Report"
@@ -218,8 +182,8 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        560,
-        200
+        660,
+        220
       ],
       "id": "8659c4a5-64dd-48e5-b286-9f447c641471",
       "name": "Wait",
@@ -231,14 +195,14 @@
         "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/rules/apply-qa-decisions",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Fetch Input Files').item.json.run_id }}\",\n  \"report_filename\": \"Rule_Verification_Report_{{ $('Set Path').item.json.cu_id }}.xlsx\",\n  \"sharepoint_source_path\": \"{{ $('Set Path').item.json.mapping_path }}\"\n}",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Fetch Input Files').item.json.run_id }}\",\n  \"report_filename\": \"Rule_Verification_Report_{{ $('Set Path').item.json.cu_id }}.xlsx\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        200,
-        180
+        880,
+        220
       ],
       "id": "ccfce7d5-66af-472d-97c2-ebe19cd0309a",
       "name": "Apply QA Decisions"
@@ -246,7 +210,7 @@
     {
       "parameters": {
         "fromEmail": "dragon9968@gmail.com",
-        "toEmail": "dinhlong.nguyen@evizi.com, ngoclinh.nguyen@evizi.com",
+        "toEmail": "dinhlong.nguyen@evizi.com",
         "subject": "=BSDC Ingest] Need to review Rule Verification Report - {{ $('Set Path').item.json.cu_id }}",
         "html": "=<div style=\"font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px;\">\n  <h2 style=\"color: #0056b3; margin-top: 0;\">📢 Rule Verification Report - Action Required</h2>\n  <p>The <b>Rule Verification Report</b> for Credit Union <b>{{ $('Set Path').item.json.cu_id }}</b> has been successfully generated and uploaded to SharePoint.</p>\n  \n  <div style=\"background-color: #f8f9fa; padding: 15px; border-left: 4px solid #0056b3; margin: 20px 0;\">\n    <p style=\"margin: 0 0 10px 0;\"><b>Step 1:</b> Open the Excel report on SharePoint and update the <i>Approved / Rejected</i> status for the pending rules.</p>\n    <p style=\"margin: 0;\"><b>Step 2:</b> Once reviewed, click the button below to proceed with saving the updated decisions into the database.</p>\n  </div>\n  \n  <p style=\"text-align: center; margin: 30px 0;\">\n    <a href=\"{{ $execution.resumeFormUrl }}\" \n       style=\"background-color: #28a745; color: white; padding: 14px 24px; text-decoration: none; font-weight: bold; border-radius: 5px; display: inline-block; font-size: 15px;\">\n       ✅ Confirm QA Completion\n    </a>\n  </p>\n  \n  <hr style=\"border: 0; border-top: 1px solid #eee; margin-top: 30px;\" />\n  <p style=\"color: #888; font-size: 12px; text-align: center; margin: 0;\">This is an automated message sent from the BSDC Data Ingest System.</p>\n</div>",
         "options": {}
@@ -254,8 +218,8 @@
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "position": [
-        840,
-        180
+        440,
+        220
       ],
       "id": "87f70b55-e089-4fdc-b3f2-c15e4e6cf481",
       "name": "Send Email",
@@ -266,6 +230,38 @@
           "name": "SMTP account 2"
         }
       }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/generate/data",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"run_id\": \"={{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"={{ $('Set Path').item.json.cu_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        220
+      ],
+      "id": "fa1a2d5c-40ca-4981-8750-bb9eae1bce68",
+      "name": "Generate Transform Data"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/verify/report",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        440
+      ],
+      "id": "aa8e63c7-2d6e-460f-98dc-4a3062b81ab1",
+      "name": "Perform Verification"
     }
   ],
   "pinData": {},
@@ -379,13 +375,35 @@
           }
         ]
       ]
+    },
+    "Apply QA Decisions": {
+      "main": [
+        [
+          {
+            "node": "Generate Transform Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Transform Data": {
+      "main": [
+        [
+          {
+            "node": "Perform Verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "2548ef68-da23-458b-8d3f-67ce8769f6be",
+  "versionId": "718020ab-e60e-4e1f-a330-c838dd517aa4",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "7e4ab5b15df44e4fdbde799614bf980ec37978041426198882a1d59e9c97067d"

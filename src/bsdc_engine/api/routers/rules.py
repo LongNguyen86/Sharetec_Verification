@@ -35,6 +35,7 @@ class ExportReportRequest(BaseModel):
 class ApplyQARequest(BaseModel):
     run_id: str
     report_filename: str
+    cu_id: str | None = None
     sharepoint_source_path: str | None = None
 
 
@@ -75,17 +76,23 @@ def ai_parse(payload: AIParseRequest):
 def export_verification_report(payload: ExportReportRequest):
     try:
         ws = RunWorkspace(run_id=payload.run_id)
-        report_path = export_rule_verification_report(
-            cu_id=payload.cu_id, output_dir=ws.qa_reports_dir
-        )
+        
+        # 1. Pass ws.qa_reports_dir (Path object) to save directly inside workspace\runs\<run_id>\out\qa_reports
+        report_path = export_rule_verification_report(ws.qa_reports_dir, cu_id=payload.cu_id)
 
+        # 2. Determine SharePoint target folder dynamically if not explicitly provided
+        target_path = payload.sharepoint_target_path.strip() if getattr(payload, "sharepoint_target_path", None) else None
+        
+        client = SharePointClient()
+        if not target_path:
+            logger.info(f"Resolving SharePoint QA folder dynamically for CU [{payload.cu_id}]...")
+            auto_paths = client.resolve_cu_paths(payload.cu_id)
+            target_path = auto_paths.get("mapping_path")
+
+        # 3. Upload report to SharePoint QA folder
         uploaded = False
-        if payload.sharepoint_target_path:
-            client = SharePointClient()
-            uploaded = client.upload_file(
-                local_file_path=report_path,
-                target_folder_path=payload.sharepoint_target_path,
-            )
+        if target_path and Path(report_path).exists():
+            uploaded = client.upload_file(local_file_path=Path(report_path), target_folder_path=target_path)
 
         return {
             "status": "success",
@@ -98,39 +105,29 @@ def export_verification_report(payload: ExportReportRequest):
         logger.error(f"Export verification report failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @router.post("/apply-qa-decisions")
 def apply_qa(payload: ApplyQARequest):
     try:
         ws = RunWorkspace(run_id=payload.run_id)
         report_file = ws.qa_reports_dir / payload.report_filename
 
-        if payload.sharepoint_source_path:
-            client = SharePointClient()
+        client = SharePointClient()
+        source_path = payload.sharepoint_source_path.strip() if payload.sharepoint_source_path else None
 
-            raw_path = clean_sharepoint_path(payload.sharepoint_source_path)
-            site_prefix = urllib.parse.urlparse(client.site_url).path.rstrip("/")
+        # Automatically resolve SharePoint QA path using cu_id if source_path is omitted
+        if not source_path and payload.cu_id:
+            logger.info(f"Resolving SharePoint QA folder dynamically for CU [{payload.cu_id}]...")
+            auto_paths = client.resolve_cu_paths(payload.cu_id)
+            source_path = auto_paths.get("mapping_path")
 
-            if not raw_path.startswith("/"):
-                raw_path = "/" + raw_path
+        if source_path:
+            clean_dir = clean_sharepoint_path(source_path)
+            sp_file_path = f"{clean_dir.rstrip('/')}/{payload.report_filename}"
+            logger.info(f"Downloading reviewed report from SharePoint: {sp_file_path}")
 
-            if site_prefix and not raw_path.startswith(site_prefix):
-                server_rel_folder = f"{site_prefix}{raw_path}"
-            else:
-                server_rel_folder = raw_path
-
-            sp_file_path = f"{server_rel_folder.rstrip('/')}/{payload.report_filename}"
-            logger.info(
-                f"Downloading reviewed report from SharePoint: {sp_file_path}"
-            )
-
-            downloaded = client.download_file_by_path(
-                sp_file_path, ws.qa_reports_dir
-            )
+            downloaded = client.download_file_by_path(sp_file_path, ws.qa_reports_dir)
             if not downloaded:
-                raise Exception(
-                    f"Failed to download file from SharePoint: {sp_file_path}"
-                )
+                raise Exception(f"Failed to download file from SharePoint: {sp_file_path}")
 
         stats = apply_qa_decisions(reviewed_report_path=report_file)
         return {"status": "success", "run_id": ws.run_id, "stats": stats}

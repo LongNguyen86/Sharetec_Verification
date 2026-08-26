@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     SHAREPOINT_USERNAME: str = Field(default="", alias="SHAREPOINT_USERNAME")
     SHAREPOINT_PASSWORD: str = Field(default="", alias="SHAREPOINT_PASSWORD")
 
+    # SharePoint Directory Paths Configuration
+    SHAREPOINT_BASE_CONVERSIONS_DIR: str = "Shared Documents/1. Conversion & Mergers Projects/z_Completed Conversions"
+    SHAREPOINT_QA_FOLDER_REL: str = "07 Team Folders/QA Team Folder"
+    SHAREPOINT_MATRIX_FOLDER_REL: str = "03 Info From CU/03 Matrix"
+    
     # Gemini AI API Key
     GEMINI_API_KEY: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
     GOOGLE_API_KEY: Optional[str] = Field(default=None, alias="GOOGLE_API_KEY")
