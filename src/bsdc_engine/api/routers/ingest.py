@@ -39,19 +39,22 @@ def fetch_input_files(payload: FetchInputRequest):
 
         downloaded = []
 
-        # 1. Fetch Mapping path
-        if payload.mapping_path:
-            m_files = client.fetch_paths([payload.mapping_path], output_dir=ws.mapping_dir)
+        # 1. Fetch Mapping path (tự động làm sạch khoảng trắng/ký tự xuống dòng)
+        if payload.mapping_path and payload.mapping_path.strip():
+            m_path = payload.mapping_path.strip()
+            m_files = client.fetch_paths([m_path], output_dir=ws.mapping_dir)
             downloaded.extend(m_files)
 
         # 2. Fetch Matrix path
-        if payload.matrix_path:
-            mat_files = client.fetch_paths([payload.matrix_path], output_dir=ws.matrix_dir)
+        if payload.matrix_path and payload.matrix_path.strip():
+            mat_path = payload.matrix_path.strip()
+            mat_files = client.fetch_paths([mat_path], output_dir=ws.matrix_dir)
             downloaded.extend(mat_files)
 
         # 3. Fetch Raw Data path
-        if payload.raw_data_path:
-            r_files = client.fetch_paths([payload.raw_data_path], output_dir=ws.raw_dir)
+        if getattr(payload, "raw_data_path", None) and payload.raw_data_path.strip():
+            r_path = payload.raw_data_path.strip()
+            r_files = client.fetch_paths([r_path], output_dir=ws.raw_dir)
             downloaded.extend(r_files)
 
         if not downloaded:
@@ -70,6 +73,8 @@ def fetch_input_files(payload: FetchInputRequest):
             "downloaded_files_count": len(final_files),
             "files": [str(p) for p in final_files],
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Fetch Input Files failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

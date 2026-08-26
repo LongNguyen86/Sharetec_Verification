@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 
 class FetchInputRequest(BaseModel):
-    cu_id: str = Field(default="MEDICOOP", description="Credit Union Identifier")
+    cu_id: str = Field(..., description="Credit Union Identifier (e.g., MEDICOOP, TUCOOP)")
     mapping_path: Optional[str] = None
     raw_data_path: Optional[str] = None
     matrix_path: Optional[str] = None
