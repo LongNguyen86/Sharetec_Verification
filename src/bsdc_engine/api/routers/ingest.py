@@ -30,42 +30,35 @@ def _organize_file(file_path: Path, ws: RunWorkspace) -> Path:
         return dest_path
     return file_path
 
-
 @router.post("/fetch-input-files")
 def fetch_input_files(payload: FetchInputRequest):
     try:
         ws = RunWorkspace(run_id=getattr(payload, "run_id", None))
         client = SharePointClient()
 
+        # If paths are not explicitly provided, resolve them dynamically using cu_id
+        mapping_p = payload.mapping_path
+        matrix_p = payload.matrix_path
+        raw_p = getattr(payload, "raw_data_path", None)
+
+        if not mapping_p or not matrix_p:
+            auto_paths = client.resolve_cu_paths(payload.cu_id)
+            mapping_p = mapping_p or auto_paths.get("mapping_path")
+            matrix_p = matrix_p or auto_paths.get("matrix_path")
+            raw_p = raw_p or auto_paths.get("raw_data_path")
+
         downloaded = []
-
-        # 1. Fetch Mapping path (tự động làm sạch khoảng trắng/ký tự xuống dòng)
-        if payload.mapping_path and payload.mapping_path.strip():
-            m_path = payload.mapping_path.strip()
-            m_files = client.fetch_paths([m_path], output_dir=ws.mapping_dir)
-            downloaded.extend(m_files)
-
-        # 2. Fetch Matrix path
-        if payload.matrix_path and payload.matrix_path.strip():
-            mat_path = payload.matrix_path.strip()
-            mat_files = client.fetch_paths([mat_path], output_dir=ws.matrix_dir)
-            downloaded.extend(mat_files)
-
-        # 3. Fetch Raw Data path
-        if getattr(payload, "raw_data_path", None) and payload.raw_data_path.strip():
-            r_path = payload.raw_data_path.strip()
-            r_files = client.fetch_paths([r_path], output_dir=ws.raw_dir)
-            downloaded.extend(r_files)
+        if mapping_p:
+            downloaded.extend(client.fetch_paths([mapping_p], output_dir=ws.mapping_dir))
+        if matrix_p:
+            downloaded.extend(client.fetch_paths([matrix_p], output_dir=ws.matrix_dir))
+        if raw_p:
+            downloaded.extend(client.fetch_paths([raw_p], output_dir=ws.raw_dir))
 
         if not downloaded:
-            raise HTTPException(status_code=400, detail="No files downloaded from provided SharePoint paths.")
+            raise HTTPException(status_code=400, detail=f"No files downloaded for CU [{payload.cu_id}]. Check SharePoint paths.")
 
-        # Re-organize files strictly by filename rules
-        final_files = []
-        for f_path in downloaded:
-            if f_path.exists():
-                organized = _organize_file(f_path, ws)
-                final_files.append(organized)
+        final_files = [_organize_file(f, ws) for f in downloaded if f.exists()]
 
         return {
             "status": "success",

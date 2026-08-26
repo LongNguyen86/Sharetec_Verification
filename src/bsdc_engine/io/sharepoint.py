@@ -21,6 +21,16 @@ class SharePointClient:
         self.auth_dir.mkdir(parents=True, exist_ok=True)
         self.session_file = self.auth_dir / "state.json"
 
+    def _ensure_server_relative_url(self, path_str: str) -> str:
+        """Ensure path starts with site server relative URL prefix."""
+        clean_p = path_str.replace("\\", "/").strip("/")
+        site_path = urllib.parse.urlparse(self.site_url).path.rstrip("/")
+        if clean_p.startswith(site_path.lstrip("/")):
+            return f"/{clean_p}"
+        if clean_p.startswith("sites/"):
+            return f"/{clean_p}"
+        return f"{site_path}/{clean_p}"
+
     def _cleanup_expired_session(self, reason: str = ""):
         if self.session_file.exists():
             try:
@@ -73,10 +83,11 @@ class SharePointClient:
             self._ensure_authenticated(p)
             request_context = p.request.new_context(storage_state=str(self.session_file))
 
-            encoded_url = urllib.parse.quote(server_relative_url)
+            full_server_rel = self._ensure_server_relative_url(server_relative_url)
+            escaped_url = full_server_rel.replace("'", "''")
+            encoded_url = urllib.parse.quote(escaped_url, safe='/$()')
             api_endpoint = f"{self.site_url}/_api/web/getfilebyserverrelativeurl('{encoded_url}')/$value"
 
-            # Ép SharePoint không dùng dữ liệu cache cũ bằng các header chống cache
             headers = {
                 "Accept": "application/json;odata=verbose",
                 "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -94,6 +105,7 @@ class SharePointClient:
                 logger.info(f"Successfully downloaded file: {file_name}")
                 return dest_file
             else:
+                logger.warning(f"Failed to download [{file_name}] (Status: {response.status})")
                 if response.status in [401, 403]:
                     self._cleanup_expired_session(f"API returned HTTP {response.status}.")
                 return None
@@ -106,7 +118,9 @@ class SharePointClient:
             self._ensure_authenticated(p)
             request_context = p.request.new_context(storage_state=str(self.session_file))
 
-            encoded_folder = urllib.parse.quote(folder_relative_path)
+            full_folder_path = self._ensure_server_relative_url(folder_relative_path)
+            escaped_folder = full_folder_path.replace("'", "''")
+            encoded_folder = urllib.parse.quote(escaped_folder, safe='/$()')
             api_endpoint = f"{self.site_url}/_api/web/getfolderbyserverrelativeurl('{encoded_folder}')/files"
 
             response = request_context.get(
@@ -137,7 +151,7 @@ class SharePointClient:
             files_list = data.get("d", {}).get("results", [])
             downloaded_files = []
             for file_info in files_list:
-                f_name = file_info["Name"]
+                f_name = file_info.get("Name", "")
                 ext = Path(f_name).suffix.lower()
 
                 # Skip non-data files inside folder
@@ -145,8 +159,15 @@ class SharePointClient:
                     logger.info(f"Skipping non-data file inside folder: {f_name}")
                     continue
 
-                f_encoded = urllib.parse.quote(file_info["ServerRelativeUrl"])
-                file_val_url = f"{self.site_url}/_api/web/getfilebyserverrelativeurl('{f_encoded}')/$value"
+                # Use UniqueId (GUID) if available to avoid path encoding issues with special characters (%) or spaces
+                unique_id = file_info.get("UniqueId")
+                if unique_id:
+                    file_val_url = f"{self.site_url}/_api/web/getfilebyid('{unique_id}')/$value"
+                else:
+                    f_server_url = file_info.get("ServerRelativeUrl", "")
+                    escaped_file_url = f_server_url.replace("'", "''")
+                    encoded_file_url = urllib.parse.quote(escaped_file_url, safe='/$()')
+                    file_val_url = f"{self.site_url}/_api/web/getfilebyserverrelativeurl('{encoded_file_url}')/$value"
 
                 file_resp = request_context.get(
                     file_val_url,
@@ -163,8 +184,11 @@ class SharePointClient:
                     dest_path = output_dir / f_name
                     dest_path.write_bytes(f_bytes)
                     downloaded_files.append(dest_path)
+                    logger.info(f"Successfully downloaded file: {f_name}")
                 elif file_resp.status in [401, 403]:
                     self._cleanup_expired_session(f"File download returned HTTP {file_resp.status}.")
+                else:
+                    logger.warning(f"Failed to download [{f_name}] (Status: {file_resp.status})")
 
             return downloaded_files
 
@@ -194,9 +218,13 @@ class SharePointClient:
             return False
 
         folder_clean = clean_sharepoint_path(target_folder_path)
-        encoded_folder = urllib.parse.quote(folder_clean)
+        full_folder_path = self._ensure_server_relative_url(folder_clean)
+        escaped_folder = full_folder_path.replace("'", "''")
+        encoded_folder = urllib.parse.quote(escaped_folder, safe='/$()')
+        
         file_name = local_file_path.name
-        encoded_filename = urllib.parse.quote(file_name)
+        escaped_filename = file_name.replace("'", "''")
+        encoded_filename = urllib.parse.quote(escaped_filename, safe='/$()')
 
         context_info_url = f"{self.site_url}/_api/contextinfo"
         upload_endpoint = (
@@ -251,3 +279,56 @@ class SharePointClient:
                 if response.status in [401, 403]:
                     self._cleanup_expired_session(f"Upload API returned HTTP {response.status}.")
                 return False
+
+    def resolve_cu_paths(
+        self,
+        cu_id: str,
+        base_parent_dir: str | None = None
+    ) -> dict[str, str]:
+        """Dynamically search SharePoint parent directory for a matching CU folder name using global settings."""
+        cu_clean = cu_id.strip().upper()
+        # Extract main token (e.g. 'MOTION' from 'MOTION FCU')
+        cu_token = cu_clean.split()[0] if cu_clean else ""
+
+        # Fallback to configured global base directory if custom parent is not provided
+        base_dir = base_parent_dir or settings.SHAREPOINT_BASE_CONVERSIONS_DIR
+        clean_parent = base_dir.strip().replace("\\", "/").strip("/")
+        full_parent_path = self._ensure_server_relative_url(clean_parent)
+        escaped_parent = full_parent_path.replace("'", "''")
+        encoded_parent = urllib.parse.quote(escaped_parent, safe='/$()')
+        api_endpoint = f"{self.site_url}/_api/web/getfolderbyserverrelativeurl('{encoded_parent}')/folders"
+
+        target_cu_folder = None
+        with sync_playwright() as p:
+            self._ensure_authenticated(p)
+            request_context = p.request.new_context(storage_state=str(self.session_file))
+            response = request_context.get(
+                api_endpoint,
+                headers={"Accept": "application/json;odata=verbose"}
+            )
+
+            if response.status == 200:
+                folders = response.json().get("d", {}).get("results", [])
+                for f in folders:
+                    folder_name = f.get("Name", "").upper()
+                    if cu_clean in folder_name or (cu_token and cu_token in folder_name):
+                        target_cu_folder = f.get("ServerRelativeUrl", "")
+                        logger.info(f"Dynamically resolved CU [{cu_id}] raw directory -> {target_cu_folder}")
+                        break
+
+        if not target_cu_folder:
+            logger.error(f"Could not locate any SharePoint folder matching CU ID: {cu_id}")
+            return {}
+
+        # Normalize path: strip site prefix (e.g. '/sites/professional_services/') so path starts with 'Shared Documents/...'
+        if "Shared Documents" in target_cu_folder:
+            rel_cu_folder = "Shared Documents" + target_cu_folder.split("Shared Documents", 1)[1]
+        else:
+            rel_cu_folder = target_cu_folder.lstrip("/")
+
+        logger.info(f"Normalized CU [{cu_id}] path -> {rel_cu_folder}")
+
+        return {
+            "mapping_path": f"{rel_cu_folder}/{settings.SHAREPOINT_QA_FOLDER_REL}",
+            "matrix_path": f"{rel_cu_folder}/{settings.SHAREPOINT_MATRIX_FOLDER_REL}",
+        }
