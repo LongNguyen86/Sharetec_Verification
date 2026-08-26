@@ -65,13 +65,12 @@ class TransformationBuilder:
                     base_cols = [f"{default_table_key}::col_{i}" for i in range(df_primary.shape[1])]
                     base_df = df_primary.rename(dict(zip(df_primary.columns, base_cols)))
 
-                    # 1. Dynamic Auto-Join Secondary Tables
+                    # 1. Dynamic Auto-Join Secondary Tables (Removed hardcoded MEMBER_ACCOUNTS)
                     cursor.execute(
                         "SELECT DISTINCT data_file FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND data_file IS NOT NULL AND data_file != '' AND data_file != 'N/A'",
                         (cu_id, current_sheet, sec),
                     )
                     sec_data_files = set([Path(r[0]).stem.upper().replace(" ", "_") for r in cursor.fetchall() if r[0]])
-                    sec_data_files.add("MEMBER_ACCOUNTS")
 
                     for sec_file in sec_data_files:
                         if sec_file != default_table_key and sec_file in tables:
@@ -79,13 +78,17 @@ class TransformationBuilder:
                             sec_cols = [f"{sec_file}::col_{i}" for i in range(sec_raw.shape[1])]
                             sec_df = sec_raw.rename(dict(zip(sec_raw.columns, sec_cols)))
 
+                            # Automatically resolve JOIN keys by matching corresponding column indices
                             left_key, right_key = None, None
-                            for p_k in [f"{default_table_key}::col_6", f"{default_table_key}::col_16", f"{default_table_key}::col_0"]:
-                                for s_k in [f"{sec_file}::col_16", f"{sec_file}::col_6", f"{sec_file}::col_0"]:
-                                    if p_k in base_df.columns and s_k in sec_df.columns:
-                                        left_key, right_key = p_k, s_k
-                                        break
-                                if left_key: break
+                            primary_col_indices = [c.split("::col_")[-1] for c in base_df.columns if "::col_" in c]
+                            sec_col_indices = [c.split("::col_")[-1] for c in sec_df.columns if "::col_" in c]
+                            
+                            # Prioritize common column indices (e.g., col_0, col_6, col_16...)
+                            common_indices = [idx for idx in ["0", "6", "16", "1"] if idx in primary_col_indices and idx in sec_col_indices]
+                            for idx in common_indices:
+                                left_key = f"{default_table_key}::col_{idx}"
+                                right_key = f"{sec_file}::col_{idx}"
+                                break
 
                             if left_key and right_key:
                                 try:

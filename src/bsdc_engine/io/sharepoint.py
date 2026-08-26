@@ -120,6 +120,7 @@ class SharePointClient:
             )
 
             if response.status != 200:
+                logger.warning(f"Failed to fetch folder [{folder_relative_path}]. Status: {response.status}")
                 if response.status in [401, 403]:
                     self._cleanup_expired_session(f"API returned HTTP {response.status}.")
                 return []

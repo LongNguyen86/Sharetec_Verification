@@ -23,6 +23,15 @@ def resolve_column_name(data_file: str, col_letter: str, default_table: str, ava
     return None
 
 
+def find_member_table_prefix(columns: list[str], default_table: str) -> str:
+    """Dynamically detect table prefix containing Member/Account data in the current DataFrame."""
+    tables = list(set(c.split("::")[0] for c in columns if "::" in c))
+    for t in tables:
+        if any(keyword in t for keyword in ["MEMBER", "CUST", "ACCT", "CLIENT"]):
+            return t
+    return default_table.upper().replace(" ", "_") if default_table else (tables[0] if tables else "")
+
+
 class ConditionalExecutor(BaseExecutor):
     def evaluate(
         self,
@@ -36,12 +45,15 @@ class ConditionalExecutor(BaseExecutor):
         sec_name: str = "",
     ) -> pl.Expr:
         raw_notes_upper = raw_notes.upper()
+        
+        # Dynamically resolve Member/Account table prefix for current CU
+        mb_prefix = find_member_table_prefix(df.columns, default_table)
 
-        mb_first_col = [c for c in df.columns if c.startswith("MEMBER_ACCOUNTS::col_3")]
-        mb_mid_col = [c for c in df.columns if c.startswith("MEMBER_ACCOUNTS::col_4")]
-        mb_last_f_col = [c for c in df.columns if c.startswith("MEMBER_ACCOUNTS::col_5")]
-        mb_last_g_col = [c for c in df.columns if c.startswith("MEMBER_ACCOUNTS::col_6")]
-        mb_branch_col = [c for c in df.columns if c.startswith("MEMBER_ACCOUNTS::col_18")]
+        mb_first_col = [c for c in df.columns if c.startswith(f"{mb_prefix}::col_3")]
+        mb_mid_col = [c for c in df.columns if c.startswith(f"{mb_prefix}::col_4")]
+        mb_last_f_col = [c for c in df.columns if c.startswith(f"{mb_prefix}::col_5")]
+        mb_last_g_col = [c for c in df.columns if c.startswith(f"{mb_prefix}::col_6")]
+        mb_branch_col = [c for c in df.columns if c.startswith(f"{mb_prefix}::col_18")]
 
         if "MB.FIRST-NAME" in raw_notes_upper or target_field.endswith("first-name"):
             if mb_first_col: return pl.col(mb_first_col[0]).cast(pl.Utf8)
