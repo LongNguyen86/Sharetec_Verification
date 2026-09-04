@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 
 from src.bsdc_engine.models.inputs import FetchInputRequest
 from src.bsdc_engine.io.sharepoint import SharePointClient
+from src.bsdc_engine.errors import SharePointAuthError
 from src.bsdc_engine.workspace import RunWorkspace
 from src.bsdc_engine.logging import get_logger
 
@@ -29,6 +30,7 @@ def _organize_file(file_path: Path, ws: RunWorkspace) -> Path:
         logger.info(f"Reorganized [{file_path.name}] -> {target_dir.name}")
         return dest_path
     return file_path
+
 
 @router.post("/fetch-input-files")
 def fetch_input_files(payload: FetchInputRequest):
@@ -56,7 +58,10 @@ def fetch_input_files(payload: FetchInputRequest):
             downloaded.extend(client.fetch_paths([raw_p], output_dir=ws.raw_dir))
 
         if not downloaded:
-            raise HTTPException(status_code=400, detail=f"No files downloaded for CU [{payload.cu_id}]. Check SharePoint paths.")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"No files downloaded for CU [{payload.cu_id}]. Please check SharePoint folder existence and permissions."
+            )
 
         final_files = [_organize_file(f, ws) for f in downloaded if f.exists()]
 
@@ -66,6 +71,12 @@ def fetch_input_files(payload: FetchInputRequest):
             "downloaded_files_count": len(final_files),
             "files": [str(p) for p in final_files],
         }
+    except SharePointAuthError as e:
+        logger.error(f"SharePoint Auth Failure: {e}")
+        raise HTTPException(
+            status_code=401,
+            detail="SharePoint Session Expired or Authentication Required. The expired session was cleared. Please re-run the step to complete 2FA on your phone."
+        )
     except HTTPException:
         raise
     except Exception as e:

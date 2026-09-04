@@ -99,8 +99,9 @@ def main():
 
     elif args.command == "parse-rules":
         from src.bsdc_engine.rules.parser import parse_all_mapping_sheets
-        parse_all_mapping_sheets(raw_dir=ws.raw_dir, cu_id=getattr(args, "cu_id", None))
-        print(f"✅ Rule parsing completed. Extracted rules from {ws.raw_dir} into SQLite database.")
+        # ✅ Đã sửa: dùng ws.mapping_dir thay vì ws.raw_dir
+        parse_all_mapping_sheets(raw_dir=ws.mapping_dir, cu_id=getattr(args, "cu_id", None))
+        print(f"✅ Rule parsing completed. Extracted rules from {ws.mapping_dir} into SQLite database.")
 
     elif args.command == "ai-parse":
         from src.bsdc_engine.rulegen.drafter import RuleDrafter
@@ -119,12 +120,16 @@ def main():
 
     elif args.command == "generate":
         from src.bsdc_engine.generate.builders import TransformationBuilder
+        from src.bsdc_engine.config import settings
+
         out_dir = getattr(ws, "transformed_dir", ws.reconciliation_dir)
+        # ✅ Đã sửa: tự động tìm DB theo workspace hoặc fallback về settings.db_path
+        db_file = getattr(ws, "db_path", None) or settings.db_path
         
         builder = TransformationBuilder(
             raw_data_dir=ws.csv_dir,
             output_dir=out_dir,
-            db_path=getattr(ws, "db_path", None)
+            db_path=db_file
         )
         results = builder.generate_all(cu_id=getattr(args, "cu_id", None))
         print(f"✅ Transformation completed. Generated {len(results)} tables into {out_dir}.")

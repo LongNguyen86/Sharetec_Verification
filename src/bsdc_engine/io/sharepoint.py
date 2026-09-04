@@ -53,7 +53,8 @@ class SharePointClient:
 
         try:
             page.wait_for_url(re.compile(r".*sharepoint\.com.*", re.IGNORECASE), timeout=120000)
-            page.wait_for_timeout(3000)
+            # Increased timeout to 5s to ensure FedAuth/rtFa cookies are fully stabilized before saving
+            page.wait_for_timeout(5000)
             context.storage_state(path=str(self.session_file))
             logger.info("Authentication successful & saved new Session to workspace/.auth/state.json!")
         except Exception:
@@ -106,7 +107,8 @@ class SharePointClient:
                 return dest_file
             else:
                 logger.warning(f"Failed to download [{file_name}] (Status: {response.status})")
-                if response.status in [401, 403]:
+                # Only clear session on 401 Unauthorized (not on 403 Forbidden)
+                if response.status == 401:
                     self._cleanup_expired_session(f"API returned HTTP {response.status}.")
                 return None
 
@@ -135,7 +137,7 @@ class SharePointClient:
 
             if response.status != 200:
                 logger.warning(f"Failed to fetch folder [{folder_relative_path}]. Status: {response.status}")
-                if response.status in [401, 403]:
+                if response.status == 401:
                     self._cleanup_expired_session(f"API returned HTTP {response.status}.")
                 return []
 
@@ -159,7 +161,6 @@ class SharePointClient:
                     logger.info(f"Skipping non-data file inside folder: {f_name}")
                     continue
 
-                # Use UniqueId (GUID) if available to avoid path encoding issues with special characters (%) or spaces
                 unique_id = file_info.get("UniqueId")
                 if unique_id:
                     file_val_url = f"{self.site_url}/_api/web/getfilebyid('{unique_id}')/$value"
@@ -185,7 +186,7 @@ class SharePointClient:
                     dest_path.write_bytes(f_bytes)
                     downloaded_files.append(dest_path)
                     logger.info(f"Successfully downloaded file: {f_name}")
-                elif file_resp.status in [401, 403]:
+                elif file_resp.status == 401:
                     self._cleanup_expired_session(f"File download returned HTTP {file_resp.status}.")
                 else:
                     logger.warning(f"Failed to download [{f_name}] (Status: {file_resp.status})")
@@ -236,7 +237,6 @@ class SharePointClient:
             self._ensure_authenticated(p)
             request_context = p.request.new_context(storage_state=str(self.session_file))
 
-            # 1. Obtain X-RequestDigest token required for POST requests in SharePoint
             digest_resp = request_context.post(
                 context_info_url,
                 headers={"Accept": "application/json;odata=verbose"},
@@ -255,7 +255,6 @@ class SharePointClient:
                 except Exception as e:
                     logger.warning(f"Failed to parse FormDigestValue: {e}")
 
-            # 2. Upload file with X-RequestDigest header
             headers = {
                 "Accept": "application/json;odata=verbose",
                 "Content-Type": "application/octet-stream",
@@ -276,7 +275,7 @@ class SharePointClient:
                 return True
             else:
                 logger.error(f"Failed to upload file to SharePoint. Status: {response.status}")
-                if response.status in [401, 403]:
+                if response.status == 401:
                     self._cleanup_expired_session(f"Upload API returned HTTP {response.status}.")
                 return False
 
@@ -287,10 +286,8 @@ class SharePointClient:
     ) -> dict[str, str]:
         """Dynamically search SharePoint parent directory for a matching CU folder name using global settings."""
         cu_clean = cu_id.strip().upper()
-        # Extract main token (e.g. 'MOTION' from 'MOTION FCU')
         cu_token = cu_clean.split()[0] if cu_clean else ""
 
-        # Fallback to configured global base directory if custom parent is not provided
         base_dir = base_parent_dir or settings.SHAREPOINT_BASE_CONVERSIONS_DIR
         clean_parent = base_dir.strip().replace("\\", "/").strip("/")
         full_parent_path = self._ensure_server_relative_url(clean_parent)
@@ -320,7 +317,6 @@ class SharePointClient:
             logger.error(f"Could not locate any SharePoint folder matching CU ID: {cu_id}")
             return {}
 
-        # Normalize path: strip site prefix (e.g. '/sites/professional_services/') so path starts with 'Shared Documents/...'
         if "Shared Documents" in target_cu_folder:
             rel_cu_folder = "Shared Documents" + target_cu_folder.split("Shared Documents", 1)[1]
         else:

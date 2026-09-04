@@ -11,11 +11,14 @@ def parse_section_filter_expr(
 
     filter_upper = filter_str.upper().strip()
 
+    # Regex supporting both "COLUMN B = 12 OR 1202" and "COLUMN B = 12 OR COLUMN B = 1202"
     m_or = re.search(
-        r"COLUMN\s+([A-Z]+)\s*=\s*([0-9A-Z_\-\.]+)\s+OR\s+([0-9A-Z_\-\.]+)", filter_upper
+        r"COLUMN\s+([A-Z]+)\s*=\s*([0-9A-Z_\-\.]+)\s+OR\s+(?:COLUMN\s+[A-Z]+\s*=\s*)?([0-9A-Z_\-\.]+)",
+        filter_upper,
+        re.IGNORECASE,
     )
     if m_or:
-        col_let, val1, val2 = m_or.group(1), m_or.group(2), m_or.group(3)
+        col_let, val1, val2 = m_or.group(1), m_or.group(2), m_or.group(3).strip(".")
         c_name = resolve_column_name("", col_let, default_table, available_cols)
         if c_name and c_name in available_cols:
             col_expr = pl.col(c_name).cast(pl.Utf8).fill_null("").str.strip_chars()
