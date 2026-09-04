@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 from src.bsdc_engine.workspace import RunWorkspace
+from src.bsdc_engine.verify.key_matcher import KeyMatcher, detect_key_columns
 
 
 def get_latest_run_id() -> str | None:
@@ -62,6 +63,14 @@ def main():
     parser_generate.add_argument("--run-id", required=False, help="Isolated Run ID")
     parser_generate.add_argument("--cu-id", required=False, help="Credit Union ID")
 
+    # Command: verify
+    parser_verify = subparsers.add_parser("verify", help="Run Perform Verification comparing Expected vs Sharetec Actual data")
+    parser_verify.add_argument("--run-id", required=False, help="Isolated Run ID")
+    parser_verify.add_argument("--section-name", required=False, default=None, help="Optional Section CSV filename without extension")
+    parser_verify.add_argument("--key-cols", nargs="*", default=None, help="Optional Business key columns for matching")
+    parser_verify.add_argument("--compare-cols", nargs="*", default=None, help="Optional specific compare columns")
+    parser_verify.add_argument("--numeric-cols", nargs="*", default=[], help="Numeric columns for control totals check")
+
     args = parser.parse_args()
 
     if args.command == "init-db":
@@ -99,7 +108,6 @@ def main():
 
     elif args.command == "parse-rules":
         from src.bsdc_engine.rules.parser import parse_all_mapping_sheets
-        # ✅ Đã sửa: dùng ws.mapping_dir thay vì ws.raw_dir
         parse_all_mapping_sheets(raw_dir=ws.mapping_dir, cu_id=getattr(args, "cu_id", None))
         print(f"✅ Rule parsing completed. Extracted rules from {ws.mapping_dir} into SQLite database.")
 
@@ -123,9 +131,8 @@ def main():
         from src.bsdc_engine.config import settings
 
         out_dir = getattr(ws, "transformed_dir", ws.reconciliation_dir)
-        # ✅ Đã sửa: tự động tìm DB theo workspace hoặc fallback về settings.db_path
         db_file = getattr(ws, "db_path", None) or settings.db_path
-        
+
         builder = TransformationBuilder(
             raw_data_dir=ws.csv_dir,
             output_dir=out_dir,
@@ -133,6 +140,66 @@ def main():
         )
         results = builder.generate_all(cu_id=getattr(args, "cu_id", None))
         print(f"✅ Transformation completed. Generated {len(results)} tables into {out_dir}.")
+
+    elif args.command == "verify":
+        import polars as pl
+        from src.bsdc_engine.verify.comparator import DataComparator
+        from src.bsdc_engine.verify.formats import FormatValidator
+        from src.bsdc_engine.verify.aggregates import AggregateChecker
+        from src.bsdc_engine.verify.reporter import VerificationReporter
+
+        run_root = ws.raw_dir.parent.parent
+        exp_dir = getattr(ws, "reconciliation_dir", None) or (run_root / "out" / "reconciliation")
+        
+        # Centralized Sharetec Actual Directory in workspace
+        act_dir = Path("workspace/Actual_Sharetec")
+        act_dir.mkdir(parents=True, exist_ok=True)
+
+        if args.section_name:
+            target_files = [exp_dir / f"{args.section_name}.csv"]
+        else:
+            target_files = list(exp_dir.glob("Expected_*.csv"))
+
+        if not target_files:
+            print(f"❌ No Expected CSV files found in: {exp_dir}")
+            sys.exit(1)
+
+        all_section_results = []
+
+        for exp_file in target_files:
+            sec_stem = exp_file.stem
+            act_file = act_dir / f"{sec_stem}.csv"
+
+            if not act_file.exists():
+                print(f"⚠️ Skipping [{sec_stem}]: File missing in central directory {act_dir}")
+                continue
+
+            df_exp = pl.read_csv(exp_file, infer_schema_length=0)
+            df_act = pl.read_csv(act_file, infer_schema_length=0)
+
+            key_columns = args.key_cols if args.key_cols else detect_key_columns(df_exp.columns, sec_stem)
+            compare_columns = args.compare_cols if args.compare_cols else df_exp.columns
+
+            exp_map = KeyMatcher.build_record_map(df_exp, key_columns, compare_columns)
+            act_map = KeyMatcher.build_record_map(df_act, key_columns, compare_columns)
+
+            mismatches = DataComparator.compare_maps(exp_map, act_map, compare_columns)
+            fmt_issues = FormatValidator.validate_field_formats(act_map)
+            agg_issues = AggregateChecker.check_control_totals(exp_map, act_map, args.numeric_cols)
+
+            all_section_results.append({
+                "section_name": sec_stem,
+                "expected_rows": len(exp_map),
+                "actual_rows": len(act_map),
+                "mismatches": mismatches,
+                "fmt_issues": fmt_issues,
+                "agg_issues": agg_issues
+            })
+
+            print(f"✅ Verified [{sec_stem}]: Key={key_columns} | Discrepancies={len(mismatches)}")
+
+        VerificationReporter.generate_combined_report(all_section_results, output_dir=Path("test-output"))
+
 
 if __name__ == "__main__":
     main()

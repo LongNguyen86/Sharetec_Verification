@@ -26,7 +26,7 @@ class RuleDrafter:
         self.delay_between_batches = delay_between_batches
 
     def draft_pending_rules(self, cu_id: str | None = None) -> int:
-        """Retrieve unparsed rules from SQLite and invoke LLM in batches."""
+        """Retrieve unparsed rules from SQLite and invoke LLM in batches with fault-tolerant saving."""
         with self.store.get_connection() as conn:
             cursor = conn.cursor()
 
@@ -71,34 +71,41 @@ class RuleDrafter:
                     f"🧠 [Batch {batch_idx + 1}/{total_batches}] Sending {len(batch_items)} rules to Gemini AI..."
                 )
 
-                parsed_list = self.client.parse_rules_with_llm_batch(batch_items)
+                try:
+                    parsed_list = self.client.parse_rules_with_llm_batch(batch_items)
 
-                if parsed_list:
-                    for item in parsed_list:
-                        rule_id = item.get("id")
-                        r_type = item.get("rule_type", "CONDITIONAL")
-                        d_json = item.get("dsl_json", {})
-                        d_readable = item.get("dsl_readable", "")
+                    if parsed_list:
+                        for item in parsed_list:
+                            rule_id = item.get("id")
+                            r_type = item.get("rule_type", "CONDITIONAL")
+                            d_json = item.get("dsl_json", {})
+                            d_readable = item.get("dsl_readable", "")
 
-                        cursor.execute(
-                            """
-                            UPDATE rule_store 
-                            SET rule_type = ?, dsl_json = ?, dsl_readable = ?, status = 'PROVISIONAL_NEEDS_REVIEW', parsed_by = 'LLM_GEMINI'
-                            WHERE id = ?
-                        """,
-                            (
-                                r_type,
-                                json.dumps(d_json, ensure_ascii=False),
-                                d_readable,
-                                rule_id,
-                            ),
-                        )
-                        total_updated += 1
+                            cursor.execute(
+                                """
+                                UPDATE rule_store 
+                                SET rule_type = ?, dsl_json = ?, dsl_readable = ?, status = 'PROVISIONAL_NEEDS_REVIEW', parsed_by = 'LLM_GEMINI'
+                                WHERE id = ?
+                            """,
+                                (
+                                    r_type,
+                                    json.dumps(d_json, ensure_ascii=False),
+                                    d_readable,
+                                    rule_id,
+                                ),
+                            )
+                            total_updated += 1
 
-                    conn.commit()
-                    logger.info(f"   ✅ Successfully updated Batch {batch_idx + 1} into Database!")
-                else:
-                    logger.warning(f"   ⚠️ Batch {batch_idx + 1} returned empty response.")
+                        # Save batch immediately to DB
+                        conn.commit()
+                        logger.info(f"   ✅ Successfully updated and saved Batch {batch_idx + 1} into Database!")
+                    else:
+                        logger.warning(f"   ⚠️ Batch {batch_idx + 1} returned empty response.")
+
+                except Exception as batch_err:
+                    logger.error(f"   ❌ Batch {batch_idx + 1} failed: {batch_err}. Continuing with saved data...")
+                    # Continue execution so previously saved batches remain in DB
+                    break
 
                 if batch_idx < total_batches - 1:
                     logger.info(
@@ -106,5 +113,5 @@ class RuleDrafter:
                     )
                     time.sleep(self.delay_between_batches)
 
-            logger.info("🎉 COMPLETED! All rules processed by AI and updated in Database.")
+            logger.info(f"🎉 AI Parsing finished. Total rules successfully saved to DB: {total_updated}")
             return total_updated

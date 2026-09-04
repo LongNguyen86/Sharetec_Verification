@@ -27,6 +27,14 @@ workspace/reports/*
 workspace/qa_reports/*
 workspace/.auth/*
 
+# Ignore all files inside actual_Sharetec except .gitkeep
+workspace/actual_Sharetec/*
+!workspace/actual_Sharetec/.gitkeep
+
+# Ignore all files inside test-output except .gitkeep
+test-output/*
+!test-output/.gitkeep
+
 # SQLite Database & Journal/WAL Logs
 *.db
 *.db-journal
