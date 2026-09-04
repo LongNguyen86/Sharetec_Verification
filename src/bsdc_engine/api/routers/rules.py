@@ -68,8 +68,14 @@ def ai_parse(payload: AIParseRequest):
             "message": f"AI Drafting completed. Processed {count} rules via Gemini.",
         }
     except Exception as e:
-        logger.error(f"AI parse failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"AI parse handled gracefully: {e}")
+        # Return 200 OK with warning info instead of throwing 500 error to let n8n continue
+        return {
+            "status": "warning",
+            "run_id": payload.run_id,
+            "processed_rules_count": 0,
+            "message": f"AI Parse encountered an issue but pipeline continued: {str(e)}",
+        }
 
 
 @router.post("/export-verification-report")

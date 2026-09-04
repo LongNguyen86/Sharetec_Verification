@@ -152,7 +152,8 @@
         220
       ],
       "id": "d1b23007-06ec-4294-b974-35a11c6c23a6",
-      "name": "AI Parse"
+      "name": "AI Parse",
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
