@@ -23,7 +23,10 @@ def clean_excel_text(text) -> str:
     if text is None or pd.isna(text):
         return ""
 
-    s = str(text).replace("\xa0", " ").strip()
+    # Replace newlines and carriage returns with space
+    s = str(text).replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+    s = s.replace("\xa0", " ").strip()
+    s = re.sub(r"\s+", " ", s)  # Collapse multiple spaces into one
     s = s.replace("“", '"').replace("”", '"').replace("’", "'").replace("‘", "'")
     s = unicodedata.normalize("NFKC", s)
     s = "".join(ch for ch in s if unicodedata.category(ch)[0] != "C")
@@ -35,24 +38,37 @@ def parse_section_rule(raw_notes: str) -> dict:
     filter_cond = None
     join_rule_model = None
 
+    # 1. Automatically insert whitespace before keywords if concatenated (e.g., '1202LINK' -> '1202 LINK')
+    raw_notes_clean = re.sub(
+        r"([0-9A-Za-z])(LINK|JOIN|WHERE|FILTER)\b",
+        r"\1 \2",
+        raw_notes,
+        flags=re.IGNORECASE,
+    )
+
+    # 2. Separate filter condition text from link condition text
+    link_split = re.split(r"\bLINK\b", raw_notes_clean, flags=re.IGNORECASE)
+    filter_text = link_split[0]
+
     filter_match = re.search(
         r"((?:ONLY\s+CONSIDERED\s+.*?|ONLY\s+CREATE\s+.*?|DO\s+NOT\s+CREATE\s+.*?|IF\s+COLUMN\s+[A-Za-z0-9_]+\s*=\s*NULL\s+DO\s+NOT\s+CREATE\s+.*?|IF\s+COLUMN\s+.*?)(?:COLUMN\s+[A-Za-z0-9_]+\s*[^\|\n]+))",
-        raw_notes,
+        filter_text,
         re.IGNORECASE,
     )
     if not filter_match:
         filter_match = re.search(
             r"(COLUMN\s+[A-Za-z0-9_]+\s*(?:=|<|>|<>|!=|BEGINS|STARTS|IS)\s*[^\|\n]+)",
-            raw_notes,
+            filter_text,
             re.IGNORECASE,
         )
 
     if filter_match:
         filter_cond = clean_excel_text(filter_match.group(1).split("\n")[0].split("|")[0])
 
+    # 3. Parse explicit table join rules
     link_match = re.search(
         r"LINK\s+([A-Za-z0-9_]+)\s+COLUMN\s+([A-Za-z0-9_]+)\s+TO\s+([A-Za-z0-9_]+)\s+COLUMN\s+([A-Za-z0-9_]+)",
-        raw_notes,
+        raw_notes_clean,
         re.IGNORECASE,
     )
     if link_match:
@@ -85,7 +101,6 @@ def parse_section_rule(raw_notes: str) -> dict:
         "dsl_readable": readable_str if readable_str else "SECTION_HEADER_RULE",
         "status": "AUTO_PARSED",
     }
-
 
 def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
     """Parse field mapping notes into typed Pydantic v2 models."""

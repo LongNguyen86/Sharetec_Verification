@@ -65,7 +65,36 @@ class TransformationBuilder:
                     base_cols = [f"{default_table_key}::col_{i}" for i in range(df_primary.shape[1])]
                     base_df = df_primary.rename(dict(zip(df_primary.columns, base_cols)))
 
-                    # 1. Dynamic Auto-Join Secondary Tables (Removed hardcoded MEMBER_ACCOUNTS)
+                    # STEP A: APPLY SECTION FILTER PRIOR TO JOINING TO PREVENT CARTESIAN PRODUCT
+                    cursor.execute(
+                        "SELECT dsl_json, raw_notes FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND target_field = '_SECTION_RULE_' LIMIT 1",
+                        (cu_id, current_sheet, sec),
+                    )
+                    sec_rule_row = cursor.fetchone()
+                    sec_join_rule = None
+
+                    if sec_rule_row:
+                        sec_dsl_json_str, sec_raw_notes = sec_rule_row
+                        sec_filter_cond = None
+                        if sec_dsl_json_str:
+                            try:
+                                dsl_data = json.loads(sec_dsl_json_str)
+                                sec_filter_cond = dsl_data.get("filter_condition")
+                                sec_join_rule = dsl_data.get("join_rule")
+                            except Exception:
+                                pass
+                        if not sec_filter_cond and sec_raw_notes:
+                            sec_filter_cond = sec_raw_notes
+
+                        if sec_filter_cond:
+                            sec_filter_expr = parse_section_filter_expr(sec_filter_cond, default_table_key, base_df.columns)
+                            if sec_filter_expr is not None:
+                                try:
+                                    base_df = base_df.filter(sec_filter_expr)
+                                except Exception as e:
+                                    logger.error(f"Section filter error: {e}")
+
+                    # STEP B: JOIN SECONDARY TABLES ACCORDING TO PARSED JOIN_RULE SPECIFICATIONS
                     cursor.execute(
                         "SELECT DISTINCT data_file FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND data_file IS NOT NULL AND data_file != '' AND data_file != 'N/A'",
                         (cu_id, current_sheet, sec),
@@ -78,50 +107,54 @@ class TransformationBuilder:
                             sec_cols = [f"{sec_file}::col_{i}" for i in range(sec_raw.shape[1])]
                             sec_df = sec_raw.rename(dict(zip(sec_raw.columns, sec_cols)))
 
-                            # Automatically resolve JOIN keys by matching corresponding column indices
                             left_key, right_key = None, None
-                            primary_col_indices = [c.split("::col_")[-1] for c in base_df.columns if "::col_" in c]
-                            sec_col_indices = [c.split("::col_")[-1] for c in sec_df.columns if "::col_" in c]
-                            
-                            # Prioritize common column indices (e.g., col_0, col_6, col_16...)
-                            common_indices = [idx for idx in ["0", "6", "16", "1"] if idx in primary_col_indices and idx in sec_col_indices]
-                            for idx in common_indices:
-                                left_key = f"{default_table_key}::col_{idx}"
-                                right_key = f"{sec_file}::col_{idx}"
-                                break
 
-                            if left_key and right_key:
+                            # Resolve join keys from dsl_json explicit join rule
+                            if sec_join_rule:
+                                src_file = str(sec_join_rule.get("source_file", "")).upper().replace(" ", "_")
+                                src_col_let = str(sec_join_rule.get("source_col", ""))
+                                tgt_file = str(sec_join_rule.get("target_file", "")).upper().replace(" ", "_")
+                                tgt_col_let = str(sec_join_rule.get("target_col", ""))
+
+                                from src.bsdc_engine.text import col_letter_to_index
+                                src_idx = col_letter_to_index(src_col_let)
+                                tgt_idx = col_letter_to_index(tgt_col_let)
+
+                                if default_table_key == src_file and sec_file == tgt_file and src_idx >= 0 and tgt_idx >= 0:
+                                    left_key = f"{default_table_key}::col_{src_idx}"
+                                    right_key = f"{sec_file}::col_{tgt_idx}"
+                                elif default_table_key == tgt_file and sec_file == src_file and src_idx >= 0 and tgt_idx >= 0:
+                                    left_key = f"{default_table_key}::col_{tgt_idx}"
+                                    right_key = f"{sec_file}::col_{src_idx}"
+
+                            # Fallback if no explicit join rule is specified
+                            if not left_key or not right_key:
+                                primary_col_indices = [c.split("::col_")[-1] for c in base_df.columns if "::col_" in c]
+                                sec_col_indices = [c.split("::col_")[-1] for c in sec_df.columns if "::col_" in c]
+                                common_indices = [idx for idx in ["6", "16", "0", "1"] if idx in primary_col_indices and idx in sec_col_indices]
+                                for idx in common_indices:
+                                    left_key = f"{default_table_key}::col_{idx}"
+                                    right_key = f"{sec_file}::col_{idx}"
+                                    break
+
+                            if left_key and right_key and left_key in base_df.columns and right_key in sec_df.columns:
                                 try:
-                                    base_df = base_df.join(sec_df, left_on=left_key, right_on=right_key, how="left")
+                                    # Filter out null, zero, or blank key values prior to joining
+                                    valid_left = base_df.filter(
+                                        pl.col(left_key).is_not_null() & 
+                                        (pl.col(left_key).cast(pl.Utf8).str.strip_chars() != "") &
+                                        (pl.col(left_key).cast(pl.Utf8) != "0")
+                                    )
+                                    valid_right = sec_df.filter(
+                                        pl.col(right_key).is_not_null() & 
+                                        (pl.col(right_key).cast(pl.Utf8).str.strip_chars() != "") &
+                                        (pl.col(right_key).cast(pl.Utf8) != "0")
+                                    )
+                                    base_df = valid_left.join(valid_right, left_on=left_key, right_on=right_key, how="left")
                                 except Exception as e:
                                     logger.warning(f"Join warning for [{sec_file}]: {e}")
 
-                    # 2. Section Rule Filtering
-                    cursor.execute(
-                        "SELECT dsl_json, raw_notes FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND target_field = '_SECTION_RULE_' LIMIT 1",
-                        (cu_id, current_sheet, sec),
-                    )
-                    sec_rule_row = cursor.fetchone()
-
-                    if sec_rule_row:
-                        sec_dsl_json_str, sec_raw_notes = sec_rule_row
-                        sec_filter_cond = None
-                        if sec_dsl_json_str:
-                            try:
-                                sec_filter_cond = json.loads(sec_dsl_json_str).get("filter_condition")
-                            except Exception: pass
-                        if not sec_filter_cond and sec_raw_notes:
-                            sec_filter_cond = sec_raw_notes
-
-                        if sec_filter_cond:
-                            sec_filter_expr = parse_section_filter_expr(sec_filter_cond, default_table_key, base_df.columns)
-                            if sec_filter_expr is not None:
-                                try:
-                                    base_df = base_df.filter(sec_filter_expr)
-                                except Exception as e:
-                                    logger.error(f"Section filter error: {e}")
-
-                    # 3. Process Fields
+                    # STEP C: PROCESS FIELD MAPPINGS AND TRANSFORMATIONS
                     output_data = {}
                     cursor.execute(
                         "SELECT target_field, data_file, column_letter, rule_type, dsl_json, raw_notes FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND target_field != '_SECTION_RULE_' ORDER BY id ASC",
