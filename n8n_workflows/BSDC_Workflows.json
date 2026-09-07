@@ -7,7 +7,7 @@
         "url": "={{ $json.api_base_url }}api/v1/fetch-input-files",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"cu_id\": \"{{ $json.cu_id }}\"\n}",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -31,7 +31,7 @@
             {}
           ]
         },
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Fetch Input Files').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -49,7 +49,7 @@
         "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/validate-mapping",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Fetch Input Files').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -102,6 +102,12 @@
               "name": "api_base_url",
               "value": "http://127.0.0.1:8000/",
               "type": "string"
+            },
+            {
+              "id": "2cca663b-5a74-4a76-8654-5665c302798a",
+              "name": "run_id",
+              "value": "={{ \"run_\" + $json['CU Name'].toUpperCase() + \"_\" + $now.format('yyyyMMdd_HHmmss') }}",
+              "type": "string"
             }
           ]
         },
@@ -122,7 +128,7 @@
         "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/rules/parse",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Fetch Input Files').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -140,7 +146,7 @@
         "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/rules/ai-parse",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Fetch Input Files').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
         "options": {
           "timeout": 600000
         }
@@ -161,7 +167,7 @@
         "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/rules/export-verification-report",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Fetch Input Files').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -175,10 +181,18 @@
     },
     {
       "parameters": {
-        "resume": "form",
-        "formTitle": "QA Review Confirmation",
-        "formDescription": "Please edit the \"Approved\" / \"Rejected\" fields in the Rule Verification Report file on SharePoint, then click \"Submit\" below to proceed with recording the data.\n",
-        "options": {}
+        "resume": "webhook",
+        "options": {
+          "responseData": "<div style=\"font-family: Arial, sans-serif; text-align: center; padding: 50px 20px;\">\n  <div style=\"max-width: 400px; margin: 0 auto; background: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);\">\n    <h2 style=\"color: #2e7d32; margin-bottom: 10px;\">✅ QA Review Completed!</h2>\n    <p style=\"color: #555; font-size: 14px;\">Decisions recorded into database successfully.</p>\n    <p style=\"color: #999; font-size: 12px;\">This tab will close automatically...</p>\n  </div>\n</div>\n<script>\n  setTimeout(() => { window.close(); }, 2000);\n</script>",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
       },
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
@@ -196,7 +210,7 @@
         "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/rules/apply-qa-decisions",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Fetch Input Files').item.json.run_id }}\",\n  \"report_filename\": \"Rule_Verification_Report_{{ $('Set Path').item.json.cu_id }}.xlsx\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"report_filename\": \"Rule_Verification_Report_{{ $('Set Path').item.json.cu_id }}.xlsx\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -213,7 +227,7 @@
         "fromEmail": "dragon9968@gmail.com",
         "toEmail": "dinhlong.nguyen@evizi.com",
         "subject": "=BSDC Ingest] Need to review Rule Verification Report - {{ $('Set Path').item.json.cu_id }}",
-        "html": "=<div style=\"font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px;\">\n  <h2 style=\"color: #0056b3; margin-top: 0;\">📢 Rule Verification Report - Action Required</h2>\n  <p>The <b>Rule Verification Report</b> for Credit Union <b>{{ $('Set Path').item.json.cu_id }}</b> has been successfully generated and uploaded to SharePoint.</p>\n  \n  <div style=\"background-color: #f8f9fa; padding: 15px; border-left: 4px solid #0056b3; margin: 20px 0;\">\n    <p style=\"margin: 0 0 10px 0;\"><b>Step 1:</b> Open the Excel report on SharePoint and update the <i>Approved / Rejected</i> status for the pending rules.</p>\n    <p style=\"margin: 0;\"><b>Step 2:</b> Once reviewed, click the button below to proceed with saving the updated decisions into the database.</p>\n  </div>\n  \n  <p style=\"text-align: center; margin: 30px 0;\">\n    <a href=\"{{ $execution.resumeFormUrl }}\" \n       style=\"background-color: #28a745; color: white; padding: 14px 24px; text-decoration: none; font-weight: bold; border-radius: 5px; display: inline-block; font-size: 15px;\">\n       ✅ Confirm QA Completion\n    </a>\n  </p>\n  \n  <hr style=\"border: 0; border-top: 1px solid #eee; margin-top: 30px;\" />\n  <p style=\"color: #888; font-size: 12px; text-align: center; margin: 0;\">This is an automated message sent from the BSDC Data Ingest System.</p>\n</div>",
+        "html": "=<div style=\"font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px;\">\n  <h2 style=\"color: #0056b3; margin-top: 0;\">📢 Rule Verification Report - Action Required</h2>\n  <p>The <b>Rule Verification Report</b> for Credit Union <b>{{ $('Set Path').item.json.cu_id }}</b> has been successfully generated and uploaded to SharePoint.</p>\n  \n  <div style=\"background-color: #f8f9fa; padding: 15px; border-left: 4px solid #0056b3; margin: 20px 0;\">\n    <p style=\"margin: 0 0 10px 0;\"><b>Step 1:</b> Open the Excel report on SharePoint and update the <i>Approved / Rejected</i> status for the pending rules.</p>\n    <p style=\"margin: 0;\"><b>Step 2:</b> Once reviewed, click the button below to proceed with saving the updated decisions into the database.</p>\n  </div>\n  \n  <p style=\"text-align: center; margin: 30px 0;\">\n    <a href=\"{{ $execution.resumeUrl }}\" \n       style=\"background-color: #28a745; color: white; padding: 14px 24px; text-decoration: none; font-weight: bold; border-radius: 5px; display: inline-block; font-size: 15px;\">\n       ✅ Confirm QA Completion\n    </a>\n  </p>\n  \n  <hr style=\"border: 0; border-top: 1px solid #eee; margin-top: 30px;\" />\n  <p style=\"color: #888; font-size: 12px; text-align: center; margin: 0;\">This is an automated message sent from the BSDC Data Ingest System.</p>\n</div>",
         "options": {}
       },
       "type": "n8n-nodes-base.emailSend",
@@ -238,27 +252,31 @@
         "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/generate/data",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"={{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"={{ $('Set Path').item.json.cu_id }}\"\n}",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1100,
-        220
-      ],
-      "id": "fa1a2d5c-40ca-4981-8750-bb9eae1bce68",
-      "name": "Generate Transform Data"
-    },
-    {
-      "parameters": {
-        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/verify/report",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
         0,
+        440
+      ],
+      "id": "fa1a2d5c-40ca-4981-8750-bb9eae1bce68",
+      "name": "Generate Transform Data"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/verify/run",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
         440
       ],
       "id": "aa8e63c7-2d6e-460f-98dc-4a3062b81ab1",
@@ -404,7 +422,7 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "baad84f2-245e-4ab5-a65c-d6beb76e869b",
+  "versionId": "19b911b2-2fea-4b14-b9d5-5053f351242d",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "7e4ab5b15df44e4fdbde799614bf980ec37978041426198882a1d59e9c97067d"

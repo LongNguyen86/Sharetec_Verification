@@ -187,9 +187,9 @@ class TransformationBuilder:
 
                     if output_data:
                         res_df = pl.DataFrame(output_data)
-                        clean_sheet = re.sub(r'[\\/*?:"<>|]', "_", current_sheet).replace(" ", "_")
-                        clean_sec = re.sub(r'[\\/*?:"<>|]', "_", sec).replace(" ", "_")
-                        out_file = self.output_dir / f"Expected_{cu_id}_{clean_sheet}_{clean_sec}.csv"
+                        sec_clean = re.sub(r"^(?:Shares|Member|Members|Savings)\s+", "", sec, flags=re.IGNORECASE).replace(" ", "_")
+                        filename = f"{cu_id}{sec_clean}.csv" if sec_clean.startswith("(") else f"{cu_id}_{sec_clean}.csv"
+                        out_file = self.output_dir / filename
                         res_df.write_csv(out_file)
 
                         results.append(GenerateResult(

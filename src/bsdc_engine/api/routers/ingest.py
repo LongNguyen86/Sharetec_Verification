@@ -35,7 +35,10 @@ def _organize_file(file_path: Path, ws: RunWorkspace) -> Path:
 @router.post("/fetch-input-files")
 def fetch_input_files(payload: FetchInputRequest):
     try:
-        ws = RunWorkspace(run_id=getattr(payload, "run_id", None))
+        # Extract run_id explicitly from payload or default to None for auto-generation
+        requested_run_id = payload.run_id if hasattr(payload, "run_id") and payload.run_id else None
+        ws = RunWorkspace(run_id=requested_run_id)
+
         client = SharePointClient()
 
         # If paths are not explicitly provided, resolve them dynamically using cu_id

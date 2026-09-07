@@ -45,7 +45,7 @@ def run_perform_verification(payload: VerificationRequest):
         if payload.section_name:
             target_files = [exp_dir / f"{payload.section_name}.csv"]
         else:
-            target_files = list(exp_dir.glob("Expected_*.csv"))
+            target_files = list(exp_dir.glob("*.csv"))
 
         if not target_files:
             raise HTTPException(

@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 class FetchInputRequest(BaseModel):
     cu_id: str = Field(..., description="Credit Union Identifier (e.g., MEDICOOP, TUCOOP)")
+    run_id: Optional[str] = None  # Ensure Pydantic captures incoming run_id from JSON payload
     mapping_path: Optional[str] = None
     raw_data_path: Optional[str] = None
     matrix_path: Optional[str] = None
