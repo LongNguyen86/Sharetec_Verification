@@ -17,6 +17,8 @@ ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xlsm", ".xls"}
 class SharePointClient:
     def __init__(self):
         self.site_url = settings.SHAREPOINT_SITE_URL
+        self.username = os.getenv("SHAREPOINT_USERNAME") or getattr(settings, "SHAREPOINT_USERNAME", None)
+        self.password = os.getenv("SHAREPOINT_PASSWORD") or getattr(settings, "SHAREPOINT_PASSWORD", None)
         self.auth_dir = settings.WORKSPACE_DIR / ".auth"
         self.auth_dir.mkdir(parents=True, exist_ok=True)
         self.session_file = self.auth_dir / "state.json"
@@ -49,11 +51,42 @@ class SharePointClient:
         page = context.new_page()
 
         page.goto(self.site_url)
-        logger.info("PLEASE LOG IN AND COMPLETE 2FA AUTHENTICATION ON YOUR PHONE (Max 2 mins)...")
+
+        # 1. Auto-fill Username/Email from .env if prompt is visible
+        try:
+            email_input = page.wait_for_selector('input[type="email"], input[name="loginfmt"]', timeout=8000)
+            if email_input and self.username:
+                logger.info("🤖 Auto-filling Username from .env...")
+                email_input.fill(self.username)
+                page.click('input[type="submit"], #idSIButton9')
+                page.wait_for_timeout(2000)
+        except Exception:
+            logger.info("Username prompt skipped or already populated.")
+
+        # 2. Auto-fill Password from .env if prompt is visible
+        try:
+            password_input = page.wait_for_selector('input[type="password"], input[name="passwd"]', timeout=8000)
+            if password_input and self.password:
+                logger.info("🤖 Auto-filling Password from .env...")
+                password_input.fill(self.password)
+                page.click('input[type="submit"], #idSIButton9')
+        except Exception:
+            logger.info("Password prompt skipped.")
+
+        logger.info("📲 PLEASE APPROVE 2FA AUTHENTICATION ON YOUR PHONE (Max 2 mins)...")
 
         try:
+            # Wait for user to approve MFA on phone
             page.wait_for_url(re.compile(r".*sharepoint\.com.*", re.IGNORECASE), timeout=120000)
-            # Increased timeout to 5s to ensure FedAuth/rtFa cookies are fully stabilized before saving
+
+            # Automatically click 'Stay signed in?' prompt if present
+            try:
+                stay_signed_in = page.query_selector("#idSIButton9")
+                if stay_signed_in:
+                    stay_signed_in.click()
+            except Exception:
+                pass
+
             page.wait_for_timeout(5000)
             context.storage_state(path=str(self.session_file))
             logger.info("Authentication successful & saved new Session to workspace/.auth/state.json!")
@@ -75,7 +108,6 @@ class SharePointClient:
         file_name = Path(server_relative_url).name
         ext = Path(file_name).suffix.lower()
 
-        # Skip non-data files such as .doc, .docx, .txt, or temp files
         if file_name.startswith("~$") or ext not in ALLOWED_EXTENSIONS:
             logger.info(f"Skipping non-data file: {file_name}")
             return None
@@ -107,7 +139,6 @@ class SharePointClient:
                 return dest_file
             else:
                 logger.warning(f"Failed to download [{file_name}] (Status: {response.status})")
-                # Only clear session on 401 Unauthorized (not on 403 Forbidden)
                 if response.status == 401:
                     self._cleanup_expired_session(f"API returned HTTP {response.status}.")
                 return None
@@ -156,7 +187,6 @@ class SharePointClient:
                 f_name = file_info.get("Name", "")
                 ext = Path(f_name).suffix.lower()
 
-                # Skip non-data files inside folder
                 if f_name.startswith("~$") or ext not in ALLOWED_EXTENSIONS:
                     logger.info(f"Skipping non-data file inside folder: {f_name}")
                     continue
