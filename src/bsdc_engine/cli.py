@@ -71,6 +71,12 @@ def main():
     parser_verify.add_argument("--compare-cols", nargs="*", default=None, help="Optional specific compare columns")
     parser_verify.add_argument("--numeric-cols", nargs="*", default=[], help="Numeric columns for control totals check")
 
+    # Command: assemble-worksheet
+    parser_worksheet = subparsers.add_parser("assemble-worksheet", help="Extract field samples (Failed-first) and assemble HTML Verification Worksheet")
+    parser_worksheet.add_argument("--run-id", required=False, help="Isolated Run ID")
+    parser_worksheet.add_argument("--cu-id", required=False, help="Credit Union ID")
+    parser_worksheet.add_argument("--sp-template-path", required=False, help="Optional relative SharePoint path to HTML template")
+
     args = parser.parse_args()
 
     if args.command == "init-db":
@@ -150,15 +156,13 @@ def main():
 
         run_root = ws.raw_dir.parent.parent
         exp_dir = getattr(ws, "reconciliation_dir", None) or (run_root / "out" / "reconciliation")
-        
-        # Centralized Sharetec Actual Directory in workspace
         act_dir = Path("workspace/Actual_Sharetec")
         act_dir.mkdir(parents=True, exist_ok=True)
 
         if args.section_name:
             target_files = [exp_dir / f"{args.section_name}.csv"]
         else:
-            target_files = list(exp_dir.glob("Expected_*.csv"))
+            target_files = list(exp_dir.glob("*.csv"))
 
         if not target_files:
             print(f"❌ No Expected CSV files found in: {exp_dir}")
@@ -199,6 +203,74 @@ def main():
             print(f"✅ Verified [{sec_stem}]: Key={key_columns} | Discrepancies={len(mismatches)}")
 
         VerificationReporter.generate_combined_report(all_section_results, output_dir=Path("test-output"))
+
+    elif args.command == "assemble-worksheet":
+        import re
+        import polars as pl
+        from src.bsdc_engine.verify.comparator import DataComparator
+        from src.bsdc_engine.verify.formats import FormatValidator
+        from src.bsdc_engine.verify.worksheet_assembler import assemble_verification_worksheet
+        from src.bsdc_engine.rules.store import RuleStore
+
+        run_root = ws.raw_dir.parent.parent
+        exp_dir = getattr(ws, "reconciliation_dir", None) or (run_root / "out" / "reconciliation")
+        act_dir = Path("workspace/Actual_Sharetec")
+
+        target_files = list(exp_dir.glob("*.csv"))
+        if not target_files:
+            print(f"❌ No Expected CSV files found for worksheet assembly in: {exp_dir}")
+            sys.exit(1)
+
+        # Dynamic extraction of cu_id
+        cu_id = getattr(args, "cu_id", None)
+        if not cu_id:
+            # 1. Try extracting cu_id from run_id pattern (e.g. run_MEDICOOP_20260907_024632)
+            match = re.search(r"run_([A-Za-z0-9]+)_\d+", target_run_id)
+            if match:
+                cu_id = match.group(1)
+            else:
+                # 2. Fallback to querying rule_store in SQLite DB
+                store = RuleStore(db_path=getattr(ws, "db_path", None))
+                with store.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT DISTINCT cu_id FROM rule_store WHERE cu_id IS NOT NULL AND cu_id != '' LIMIT 1")
+                    row = cursor.fetchone()
+                    cu_id = row[0] if row else "CU"
+
+        verification_results = []
+        for exp_file in target_files:
+            sec_stem = exp_file.stem
+            act_file = act_dir / f"{sec_stem}.csv"
+
+            if not act_file.exists():
+                continue
+
+            df_exp = pl.read_csv(exp_file, infer_schema_length=0)
+            df_act = pl.read_csv(act_file, infer_schema_length=0)
+
+            key_columns = detect_key_columns(df_exp.columns, sec_stem)
+            compare_columns = df_exp.columns
+
+            exp_map = KeyMatcher.build_record_map(df_exp, key_columns, compare_columns)
+            act_map = KeyMatcher.build_record_map(df_act, key_columns, compare_columns)
+
+            mismatches = DataComparator.compare_maps(exp_map, act_map, compare_columns)
+            fmt_issues = FormatValidator.validate_field_formats(act_map)
+
+            verification_results.append({
+                "section_name": sec_stem,
+                "mismatches": mismatches,
+                "fmt_issues": fmt_issues
+            })
+
+        worksheet_path = assemble_verification_worksheet(
+            ws=ws,
+            cu_id=cu_id,
+            verification_results=verification_results,
+            act_dir=act_dir,
+            sp_template_relative_path=args.sp_template_path
+        )
+        print(f"✅ Worksheet HTML successfully generated for [{cu_id}] at: {worksheet_path}")
 
 
 if __name__ == "__main__":
