@@ -35,6 +35,9 @@ workspace/actual_Sharetec/*
 test-output/*
 !test-output/.gitkeep
 
+workspace/templates/*
+!workspace/templates/.gitkeep
+
 # SQLite Database & Journal/WAL Logs
 *.db
 *.db-journal
