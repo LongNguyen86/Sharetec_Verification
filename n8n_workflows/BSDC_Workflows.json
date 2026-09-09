@@ -281,6 +281,24 @@
       ],
       "id": "aa8e63c7-2d6e-460f-98dc-4a3062b81ab1",
       "name": "Perform Verification"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/worksheet/assemble",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        440
+      ],
+      "id": "5c53d50d-9160-43e0-911f-f16ca40d1221",
+      "name": "Record the Verification"
     }
   ],
   "pinData": {},
@@ -416,13 +434,24 @@
           }
         ]
       ]
+    },
+    "Perform Verification": {
+      "main": [
+        [
+          {
+            "node": "Record the Verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "19b911b2-2fea-4b14-b9d5-5053f351242d",
+  "versionId": "723f7313-8adb-437d-a148-27a6e7bcd5a0",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "7e4ab5b15df44e4fdbde799614bf980ec37978041426198882a1d59e9c97067d"

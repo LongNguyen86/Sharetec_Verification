@@ -22,11 +22,13 @@ COPY . /home/node/app
 # Install Python dependencies natively using pyproject.toml
 RUN pip3 install --no-cache-dir . --break-system-packages
 
-# Configure Playwright to use system-installed Chromium
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
-
+# Install Playwright Chromium Browser and Dependencies
+RUN python3 -m playwright install chromium --with-deps
+RUN apt-get update && apt-get install -y xvfb
 EXPOSE 5678
 
 # Import workflow and start n8n server on container launch
-CMD ["sh", "-c", "n8n import:workflow --input=/home/node/app/workspace/n8n_workflows/BSDC_Workflow.json && n8n start"]
+
+ENV DISPLAY=:99
+
+CMD ["sh", "-c", "Xvfb :99 -ac -screen 0 1024x768x24 & sleep 1 && python3 -m uvicorn src.bsdc_engine.api.app:app --host 0.0.0.0 --port 8000 & n8n import:workflow --input=/home/node/app/n8n_workflows/BSDC_Workflows.json && n8n start"]
