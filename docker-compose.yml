@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   bsdc-app:
     build: .
@@ -7,5 +9,8 @@ services:
     environment:
       - NODES_EXCLUDE=[]
     volumes:
+      # Mount current directory to container app directory for live updates
       - .:/home/node/app
+      # Mount workspace directory to preserve SQLite database and generated output
+      - ./workspace:/home/node/app/workspace
     restart: unless-stopped

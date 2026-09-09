@@ -9,6 +9,7 @@ from src.bsdc_engine.rules.dsl import (
     SectionRuleDSL,
     JoinRuleModel,
     ConditionalRuleDSL,
+    BranchModel,
     DirectRuleDSL,
     ConstantRuleDSL,
     MatrixLookupRuleDSL,
@@ -23,22 +24,89 @@ def clean_excel_text(text) -> str:
     if text is None or pd.isna(text):
         return ""
 
-    # Replace newlines and carriage returns with space
     s = str(text).replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
     s = s.replace("\xa0", " ").strip()
-    s = re.sub(r"\s+", " ", s)  # Collapse multiple spaces into one
+    s = re.sub(r"\s+", " ", s)
     s = s.replace("“", '"').replace("”", '"').replace("’", "'").replace("‘", "'")
     s = unicodedata.normalize("NFKC", s)
     s = "".join(ch for ch in s if unicodedata.category(ch)[0] != "C")
     return s
 
 
+def preprocess_notes(notes: str) -> str:
+    """Preprocess and fix typos / missing keywords in Excel notes prior to parsing."""
+    s = notes.strip()
+
+    s = re.sub(r"\bT\s+HEN\b", "THEN", s, flags=re.IGNORECASE)
+    s = re.sub(r"\bI\s+F\b", "IF", s, flags=re.IGNORECASE)
+    s = re.sub(r"\bAS\s+SIGN\b", "ASSIGN", s, flags=re.IGNORECASE)
+
+    def insert_then(match):
+        if_prefix = match.group(1)
+        action = match.group(2)
+        if "THEN" not in if_prefix.upper():
+            return f"{if_prefix} THEN {action}"
+        return match.group(0)
+
+    s = re.sub(
+        r"(\bIF\b.*?)\s+\b(LEAVE\s+BLANK|ASSIGN|CREATE|SET|NULL)\b",
+        insert_then,
+        s,
+        flags=re.IGNORECASE,
+    )
+    return s
+
+
+def clean_action_val(val_str: str) -> str:
+    """Extract clean assigned target value by stripping ASSIGN, CREATE, quotes, and trailing punctuation (; , .)."""
+    if not val_str:
+        return ""
+    s = val_str.strip()
+    if s.upper() in ["LEAVE BLANK", "BLANK", "NULL", "NONE"]:
+        return ""
+    s = re.sub(r"^(ASSIGN|CREATE)\s+(ALL\s+)?", "", s, flags=re.IGNORECASE).strip()
+    s = s.rstrip(";,.").strip()
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+        s = s[1:-1].strip()
+    s = s.rstrip(";,.").strip()
+    return s
+
+
+def clean_cond_val(cond_str: str, default_col: str) -> tuple[str, str]:
+    """Extract column letter and cleaned value list including BLANK for condition evaluation."""
+    s = cond_str.strip()
+    col_match = re.search(r"\bCOL(?:UMN)?\s+([A-Za-z0-9_]+)\b", s, re.IGNORECASE)
+    col = col_match.group(1) if col_match else default_col
+
+    rhs = re.sub(r"^\s*\bCOL(?:UMN)?\s+[A-Za-z0-9_]+\s*(=|<>|!=|IN|IS)?\s*", "", s, flags=re.IGNORECASE).strip()
+    has_blank = bool(re.search(r"\b(OR\s+)?(BLANK|NULL|EMPTY)\b", rhs, re.IGNORECASE))
+
+    quoted_vals = re.findall(r'["\']([^"\'\n]+)["\']', rhs)
+    if not quoted_vals:
+        plain_vals = [
+            v.strip() for v in re.split(r"\b(?:OR|AND)\b|,", rhs, flags=re.IGNORECASE)
+            if v.strip() and v.strip().upper() not in ["BLANK", "NULL", "EMPTY"]
+        ]
+        quoted_vals = plain_vals
+
+    vals = [v for v in quoted_vals if v.upper() not in ["BLANK", "NULL", "EMPTY"]]
+    if has_blank and "BLANK" not in [v.upper() for v in vals]:
+        vals.append("BLANK")
+
+    if vals:
+        cond_val_str = ", ".join(vals)
+    elif has_blank:
+        cond_val_str = "BLANK"
+    else:
+        cond_val_str = rhs
+
+    return col, cond_val_str
+
+
 def parse_section_rule(raw_notes: str) -> dict:
-    """Parse section-level filter conditions and table joins using Pydantic v2."""
     filter_cond = None
     join_rule_model = None
 
-    # 1. Automatically insert whitespace before keywords if concatenated (e.g., '1202LINK' -> '1202 LINK')
     raw_notes_clean = re.sub(
         r"([0-9A-Za-z])(LINK|JOIN|WHERE|FILTER)\b",
         r"\1 \2",
@@ -46,7 +114,6 @@ def parse_section_rule(raw_notes: str) -> dict:
         flags=re.IGNORECASE,
     )
 
-    # 2. Separate filter condition text from link condition text
     link_split = re.split(r"\bLINK\b", raw_notes_clean, flags=re.IGNORECASE)
     filter_text = link_split[0]
 
@@ -65,7 +132,6 @@ def parse_section_rule(raw_notes: str) -> dict:
     if filter_match:
         filter_cond = clean_excel_text(filter_match.group(1).split("\n")[0].split("|")[0])
 
-    # 3. Parse explicit table join rules
     link_match = re.search(
         r"LINK\s+([A-Za-z0-9_]+)\s+COLUMN\s+([A-Za-z0-9_]+)\s+TO\s+([A-Za-z0-9_]+)\s+COLUMN\s+([A-Za-z0-9_]+)",
         raw_notes_clean,
@@ -102,15 +168,47 @@ def parse_section_rule(raw_notes: str) -> dict:
         "status": "AUTO_PARSED",
     }
 
+
+def parse_chained_ifs(notes: str, default_col: str) -> list[dict]:
+    s = preprocess_notes(notes)
+    if_blocks = re.split(r"\bIF\s+", s, flags=re.IGNORECASE)
+    if_blocks = [b.strip() for b in if_blocks if b.strip()]
+
+    parsed_branches = []
+    for block in if_blocks:
+        then_split = re.split(r"\bTHEN\b", block, maxsplit=1, flags=re.IGNORECASE)
+        if len(then_split) < 2:
+            continue
+
+        raw_cond = then_split[0].strip()
+        then_else_part = then_split[1].strip()
+
+        else_split = re.split(r";?\s*\bELSE\b", then_else_part, maxsplit=1, flags=re.IGNORECASE)
+        raw_then = else_split[0].strip()
+        raw_else = else_split[1].strip() if len(else_split) > 1 else None
+
+        col_found, cond_val = clean_cond_val(raw_cond, default_col)
+        then_val = clean_action_val(raw_then)
+        else_val = clean_action_val(raw_else) if raw_else else None
+
+        parsed_branches.append({
+            "if_col": col_found,
+            "if_val": cond_val,
+            "then_val": then_val,
+            "else_val": else_val,
+            "raw_condition": raw_cond,
+        })
+    return parsed_branches
+
+
 def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
-    """Parse field mapping notes into typed Pydantic v2 models."""
     data_file = clean_excel_text(data_file)
     col = clean_excel_text(col)
     notes = clean_excel_text(notes)
-    notes_upper = notes.upper()
+    notes_upper = notes.upper().strip()
+    col_upper = col.upper().strip()
 
-    # Case 1: Empty mapping
-    if not col and not notes:
+    if not col_upper and not notes_upper:
         no_map = NoMappingRuleDSL()
         return {
             "rule_type": "NO_MAPPING",
@@ -119,48 +217,37 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
             "status": "AUTO_PARSED",
         }
 
-    # Case 2: Direct Mapping
-    has_conditional_keywords = any(
-        kw in notes_upper for kw in ["IF COLUMN", "IF ", "ASSIGN", "MATRIX", "LOOKUP", "WHEN", "ACCUMULATE"]
-    )
-    if col and not has_conditional_keywords:
-        direct_dsl = DirectRuleDSL(
-            source_file=data_file,
-            source_column=col,
-        )
-        return {
-            "rule_type": "DIRECT",
-            "dsl_obj": direct_dsl,
-            "dsl_readable": f"{data_file}.{col}" if data_file else f"COL_{col}",
-            "status": "AUTO_PARSED",
-        }
-
-    # Case 3: Simple Conditional Rule
-    if "IF COLUMN" in notes_upper and "ACCUMULATE" not in notes_upper:
-        cond_match = re.search(
-            r"IF\s+COLUMN\s+([A-Za-z0-9]+)\s*=\s*([A-Za-z0-9_\-\.\/]+)\s+THEN\s+(.*?)\s*(?:;|\b)\s*ELSE\s+(.*)",
-            notes,
-            re.IGNORECASE,
-        )
-
-        if cond_match:
+    if "IF " in notes_upper or "IF\n" in notes_upper or notes_upper.startswith("IF"):
+        branches = parse_chained_ifs(notes, default_col=col)
+        if branches:
+            branch_models = [BranchModel(**b) for b in branches]
             cond_dsl = ConditionalRuleDSL(
-                if_col=clean_excel_text(cond_match.group(1)),
-                if_val=clean_excel_text(cond_match.group(2)),
-                then_val=clean_excel_text(cond_match.group(3)),
-                else_val=clean_excel_text(cond_match.group(4)),
+                if_col=branch_models[0].if_col,
+                if_val=branch_models[0].if_val,
+                then_val=branch_models[0].then_val,
+                else_val=branch_models[0].else_val,
+                branches=branch_models,
                 raw_condition=notes,
             )
+
+            b_count = len(branch_models)
+            if b_count == 1:
+                b = branch_models[0]
+                readable = f"IF COL_{b.if_col} == '{b.if_val}' THEN '{b.then_val}'"
+                if b.else_val:
+                    readable += f" ELSE '{b.else_val}'"
+            else:
+                readable = f"IF ({b_count} CONDITIONS)"
+
             return {
                 "rule_type": "CONDITIONAL",
                 "dsl_obj": cond_dsl,
-                "dsl_readable": f"IF COL_{cond_dsl.if_col}=='{cond_dsl.if_val}' THEN '{cond_dsl.then_val}' ELSE '{cond_dsl.else_val}'",
+                "dsl_readable": readable,
                 "status": "AUTO_PARSED",
             }
 
-    # Case 4: Matrix Lookup
     if any(k in notes_upper for k in ["MATRIX", "LOOKUP"]):
-        match = re.search(r"ASSIGN\s+([A-Za-z0-9_\-\.]+)", notes, re.IGNORECASE)
+        match = re.search(r"ASSIGN\s+([A-Za-z0-9_\\-\\.]+)", notes, re.IGNORECASE)
         ref = match.group(1) if match else "MATRIX_LOOKUP"
 
         matrix_dsl = MatrixLookupRuleDSL(
@@ -176,12 +263,11 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
             "status": "AUTO_PARSED",
         }
 
-    # Case 5: Constant Assignment OR Cross-Table Field Reference
-    if notes_upper.startswith("ASSIGN") and "IF COLUMN" not in notes_upper:
-        val = re.sub(r"^ASSIGN\s+(ALL\s+)?", "", notes, flags=re.IGNORECASE).strip()
+    if notes_upper.startswith("ASSIGN"):
+        val = clean_action_val(notes)
         is_field_ref = bool(
             re.match(
-                r"^(MB|DP|LN|DP-TYPE|LN-TYPE|CU|CHECK_ACCOUNT_HOLDS|SAVINGS_ACCOUNTS)\.[A-Za-z0-9_\-]+",
+                r"^(MB|DP|LN|DP-TYPE|LN-TYPE|CU|CHECK_ACCOUNT_HOLDS|SAVINGS_ACCOUNTS)\.[A-Za-z0-9_\\-]+",
                 val,
                 re.IGNORECASE,
             )
@@ -190,10 +276,10 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
         if is_field_ref:
             unparsed_dsl = UnparsedRuleDSL(raw_notes=notes)
             return {
-                "rule_type": "CONDITIONAL" if col else "UNPARSED",
+                "rule_type": "CROSS_FIELD_REF",
                 "dsl_obj": unparsed_dsl,
                 "dsl_readable": f"REF('{val}')",
-                "status": "AUTO_PARSED" if col else "NEEDS_REVIEW",
+                "status": "AUTO_PARSED",
             }
         else:
             const_dsl = ConstantRuleDSL(value=val)
@@ -204,7 +290,18 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
                 "status": "AUTO_PARSED",
             }
 
-    # Case 6: Complex or Multi-IF free-text -> Pass to LLM / AI Engine
+    if col_upper and not notes_upper:
+        direct_dsl = DirectRuleDSL(
+            source_file=data_file,
+            source_column=col,
+        )
+        return {
+            "rule_type": "DIRECT",
+            "dsl_obj": direct_dsl,
+            "dsl_readable": f"{data_file}.{col}" if data_file else f"COL_{col}",
+            "status": "AUTO_PARSED",
+        }
+
     unparsed_dsl = UnparsedRuleDSL(raw_notes=notes)
     return {
         "rule_type": "UNPARSED",
@@ -217,7 +314,6 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
 def process_mapping_sheet(
     raw_df: pd.DataFrame, sheet_name: str, conn: sqlite3.Connection, cu_id: str
 ):
-    """Process a single excel mapping DataFrame and persist Pydantic validated rules to SQLite."""
     print(f"\n🔄 Reading Mapping Sheet [{sheet_name}] for CU: [{cu_id}]...")
 
     cursor = conn.cursor()
@@ -241,7 +337,6 @@ def process_mapping_sheet(
         row_vals_clean = [clean_excel_text(v) for v in row.values if pd.notna(v) and str(v).strip()]
         row_str = " | ".join(row_vals_clean)
 
-        # Detect active header column positions (Strictly IGNORE "Previous" history columns)
         row_vals_lower = [v.lower() for v in row_vals_clean]
         if "field" in row_vals_lower and any("notes" in v or "additional" in v for v in row_vals_lower):
             field_col_idx = None
@@ -269,7 +364,6 @@ def process_mapping_sheet(
         c_idx = col_letter_idx if col_letter_idx is not None else 6
         n_idx = notes_col_idx if notes_col_idx is not None else 7
 
-        # Detect Data Section Headers
         if any(kw in row_str.lower() for kw in ["table)", "(mb-", "(dp", "table", "section"]):
             clean_sec_name = row_str.split("ONLY CONSIDERED")[0].split("LINK")[0].split("|")[0].strip()
             if clean_sec_name and len(clean_sec_name) < 100:
@@ -277,7 +371,6 @@ def process_mapping_sheet(
                 active_data_file = ""
                 print(f"📌 Scanning Data Section: [{current_section}]")
 
-        # Save _SECTION_RULE_ if Filter or Join is present
         if any(kw in row_str.upper() for kw in ["ONLY CONSIDERED", "ONLY CREATE", "DO NOT CREATE", "LINK "]):
             parsed_sec = parse_section_rule(row_str)
             sec_dsl_obj: SectionRuleDSL = parsed_sec["dsl_obj"]
@@ -288,7 +381,7 @@ def process_mapping_sheet(
                     INSERT OR REPLACE INTO rule_store 
                     (cu_id, sheet_name, section_name, target_field, raw_notes, data_file, column_letter, rule_type, dsl_json, dsl_readable, status, parsed_by)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                    """,
                     (
                         cu_id,
                         sheet_name,
@@ -337,7 +430,6 @@ def process_mapping_sheet(
         if col.lower() in ["nan", "none"]: col = ""
         if raw_notes.lower() in ["nan", "none"]: raw_notes = ""
 
-        # Use INSERT OR REPLACE INTO to strictly prevent UNIQUE constraint failure errors
         parsed_res = parse_notes_to_dsl(data_file, col, raw_notes)
         rule_dsl_obj = parsed_res["dsl_obj"]
 
@@ -346,7 +438,7 @@ def process_mapping_sheet(
             INSERT OR REPLACE INTO rule_store 
             (cu_id, sheet_name, section_name, target_field, raw_notes, data_file, column_letter, rule_type, dsl_json, dsl_readable, status, parsed_by)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+            """,
             (
                 cu_id,
                 sheet_name,
@@ -393,11 +485,15 @@ def parse_all_mapping_sheets(
 
     xl = pd.ExcelFile(excel_path)
     ignore_sheets = ["cover", "index", "readme", "instruction", "instructions", "summary"]
+
     valid_sheets = [s for s in xl.sheet_names if s.strip().lower() not in ignore_sheets]
 
     store = RuleStore(db_path=db_path)
     with store.get_connection() as conn:
         conn.execute("PRAGMA journal_mode=WAL;")
+
+        conn.execute("DELETE FROM rule_store WHERE cu_id = ?", (cu_id,))
+
         for sheet in valid_sheets:
             try:
                 raw_df = xl.parse(sheet, header=None)
