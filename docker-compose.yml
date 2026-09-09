@@ -13,4 +13,6 @@ services:
       - .:/home/node/app
       # Mount workspace directory to preserve SQLite database and generated output
       - ./workspace:/home/node/app/workspace
+      # Mount n8n data directory to preserve n8n workflows and credentials
+      - n8n_data:/home/node/.n8n
     restart: unless-stopped
