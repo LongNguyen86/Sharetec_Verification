@@ -16,3 +16,5 @@ services:
       # Mount n8n data directory to preserve n8n workflows and credentials
       - n8n_data:/home/node/.n8n
     restart: unless-stopped
+volumes:
+  n8n_data:
