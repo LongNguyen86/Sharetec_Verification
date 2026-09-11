@@ -74,8 +74,13 @@
             }
           ]
         },
-        "responseMode": "lastNode",
-        "options": {}
+        "options": {
+          "respondWithOptions": {
+            "values": {
+              "formSubmittedText": "Your request has been successfully received! The system is processing it automatically in the background, and the results will be sent to your email within a few minutes."
+            }
+          }
+        }
       },
       "type": "n8n-nodes-base.formTrigger",
       "typeVersion": 2.2,
@@ -294,11 +299,64 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        440,
+        1100,
         440
       ],
       "id": "5c53d50d-9160-43e0-911f-f16ca40d1221",
       "name": "Record the Verification"
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.stdout.trim().replaceAll('\\\\', '/') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        660,
+        440
+      ],
+      "id": "9b2b3a07-ab48-432c-9be2-5e831f1f26ef",
+      "name": "Read/Write Files from Disk"
+    },
+    {
+      "parameters": {
+        "fromEmail": "dragon9968@gmail.com",
+        "toEmail": "dinhlong.nguyen@evizi.com",
+        "subject": "=BSDC Ingest - Full Execution Results - {{ $('Set Path').item.json.cu_id }}",
+        "html": "<p>Hello,</p>\n<p>The BSDC Ingest system has completed the entire processing workflow.</p>\n<p>The attached zip file contains the complete report data from the <b>runs</b> and <b>test-output</b> directories on the VPS.</p>",
+        "options": {
+          "attachments": "data"
+        }
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        880,
+        440
+      ],
+      "id": "8575a089-a8c8-4f0a-bd63-54442d6001b9",
+      "name": "Send Email1",
+      "webhookId": "14f96d0b-d22e-407a-afc3-49983bc3d47a",
+      "credentials": {
+        "smtp": {
+          "id": "z07NoaD5xvJ0lixc",
+          "name": "SMTP account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "=cd /d D:\\BSDC\\BSDC_Ingest_Engine && python -c \"import zipfile, os; run_id='{{ $('Set Path').item.json.run_id }}'; zip_p = os.path.abspath(f'workspace/results_{run_id}.zip'); z = zipfile.ZipFile(zip_p, 'w', zipfile.ZIP_DEFLATED); targets = [f'workspace/runs/{run_id}', 'test-output']; [z.write(os.path.join(r, f)) for t in targets if os.path.exists(t) for r, d, fs in os.walk(t) for f in fs if not f.startswith('.')]; z.close(); print(zip_p)\""
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        440,
+        440
+      ],
+      "id": "02cf2f94-39e2-4148-883a-b319d927d6d1",
+      "name": "Zip Files Result"
     }
   ],
   "pinData": {},
@@ -439,7 +497,40 @@
       "main": [
         [
           {
+            "node": "Zip Files Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk": {
+      "main": [
+        [
+          {
+            "node": "Send Email1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email1": {
+      "main": [
+        [
+          {
             "node": "Record the Verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zip Files Result": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
             "type": "main",
             "index": 0
           }
@@ -451,7 +542,7 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "723f7313-8adb-437d-a148-27a6e7bcd5a0",
+  "versionId": "2dc72db5-904f-442e-bdfb-7354ada9b017",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "7e4ab5b15df44e4fdbde799614bf980ec37978041426198882a1d59e9c97067d"
