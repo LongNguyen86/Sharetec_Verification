@@ -55,10 +55,8 @@ class VerificationReporter:
             if field_discrepancies:
                 df = pd.DataFrame(field_discrepancies)
                 df.to_csv(csv_path, index=False, encoding="utf-8-sig")
-            else:
-                pd.DataFrame(
-                    columns=["no", "key", "column", "expected", "actual", "issue"]
-                ).to_csv(csv_path, index=False, encoding="utf-8-sig")
+            elif csv_path.exists():
+                csv_path.unlink()  # Delete old CSV if no discrepancies found
 
             # 2. Status badges and HTML active state
             is_active = "active" if idx == 0 else ""
@@ -106,6 +104,8 @@ class VerificationReporter:
                 row_count_alert = '<span style="color: #f64e60; font-weight: 700; margin-left: 15px;">⚠️ ROW COUNT MISMATCH</span>'
 
             # Build Content Pane
+            o, c = "<", ">"
+            csv_link_html = f' (Full details in CSV: {o}a href="{csv_filename}" target="_blank"{c}{o}b{c}{csv_filename}{o}/b{c}{o}/a{c} )' if field_discrepancies else ""
             content_panes_html += f"""
             <div class="tab-pane" id="tab-pane-{idx}" style="display: {display_style};">
                 <div class="pane-header">
@@ -117,7 +117,7 @@ class VerificationReporter:
                     <div>{row_count_alert}</div>
                 </div>
                 <div class="details-meta">
-                    <b>Detail {data_issue_count} Data Discrepancies</b> (Full details in CSV: <a href="{csv_filename}" target="_blank"><b>{csv_filename}</b></a>):
+                    <b>Detail {data_issue_count} Data Discrepancies</b> {csv_link_html}:
                 </div>
                 <div class="table-container">
                     <table>

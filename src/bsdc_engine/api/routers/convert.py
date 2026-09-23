@@ -19,11 +19,9 @@ def convert_to_csv_endpoint(req: ConvertRequest):
         converter = ExcelConverter(output_dir=ws.csv_dir)
         csv_files = []
 
-        # Scan and convert Excel files from both in/raw and work/matrix
-        for target_dir in [ws.raw_dir, ws.matrix_dir]:
-            if target_dir.exists():
-                converted = converter.convert_all_in_dir(input_dir=target_dir)
-                csv_files.extend(converted)
+        # Only scan and convert Excel files from in/raw directory (ignore work/matrix)
+        if ws.raw_dir.exists():
+            csv_files = converter.convert_all_in_dir(input_dir=ws.raw_dir)
 
         return {
             "status": "success",

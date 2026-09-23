@@ -15,7 +15,8 @@ class RunWorkspace:
         # Input & Raw data
         self.raw_dir = self.base_dir / "in" / "raw"
         self.mapping_dir = self.base_dir / "in" / "mapping"
-
+        self.actual_dir = self.base_dir / "in" / "actual_sharetec"
+        
         # Working directory for CSVs and Matrix
         self.work_dir = self.base_dir / "work"
         self.csv_dir = self.work_dir / "csv"
