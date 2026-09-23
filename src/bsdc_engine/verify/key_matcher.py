@@ -24,9 +24,9 @@ def detect_key_columns(columns: list[str], file_name: str = "") -> list[str]:
     """
     Strict business key detection per BSDC domain rules:
     - Member: ONLY member number (e.g. mb.mb-num)
-    - Shares Certificates: mb-num + type + cert-num
-    - Shares Regular/Drafts: mb-num + type
-    - Loans: ln-num (or mb-num + type)
+    - Shares Certificates: mb-num + cert-num (EXCLUDE type so type changes trigger VARIANCE instead of MISSING_RECORD)
+    - Shares Regular/Drafts: mb-num
+    - Loans: ln-num (or mb-num)
     """
     fn_lower = file_name.lower()
 
@@ -36,37 +36,35 @@ def detect_key_columns(columns: list[str], file_name: str = "") -> list[str]:
         if mb_col:
             return [mb_col]
 
-    # 2. SHARES / DEPOSIT MODULE
+    # 2. SHARES / DEPOSIT MODULE: Exclude 'type' column from primary keys
     if any(x in fn_lower for x in ["share", "dp", "deposit"]):
         mb_col = find_column_by_patterns(columns, ["dp.mb-num", "mb-num", "account_num", "member_num"])
-        type_col = find_column_by_patterns(columns, ["dp.type", "type", "share_type", "grp-type"])
         
+        # For Certificates / CDs: Primary Key is Member Number + Certificate Number
         if any(x in fn_lower for x in ["certific", "cd"]):
             cert_col = find_column_by_patterns(
                 columns, 
                 ["dp.cert-num", "cert-num", "certnum", "dp.cert", "cert", "cert_num", "certificate", "cert-no", "cert_no"]
             )
-            keys = [k for k in [mb_col, type_col, cert_col] if k]
+            keys = [k for k in [mb_col, cert_col] if k]
             if keys:
                 return keys
 
-        keys = [k for k in [mb_col, type_col] if k]
-        if keys:
-            return keys
+        # For Regular Shares / Drafts: Primary Key is Member Number
+        if mb_col:
+            return [mb_col]
 
-    # 3. LOAN MODULE
+    # 3. LOAN MODULE: Exclude 'type' column from primary keys
     if any(x in fn_lower for x in ["loan", "ln"]):
         ln_col = find_column_by_patterns(columns, ["ln.ln-num", "ln-num", "loan_num", "loan-num", "note-num"])
         if ln_col:
             return [ln_col]
         
         mb_col = find_column_by_patterns(columns, ["ln.mb-num", "mb-num"])
-        type_col = find_column_by_patterns(columns, ["ln.type", "type"])
-        keys = [k for k in [mb_col, type_col] if k]
-        if keys:
-            return keys
+        if mb_col:
+            return [mb_col]
 
-    # 4. Fallback Generic Search
+    # 4. Fallback Generic Search (Excluding type columns)
     for c in columns:
         cl = c.lower()
         if re.search(r"(\.|^|-|_)(num|number|id|account|acct)($|\b|-|_)", cl) and "type" not in cl:

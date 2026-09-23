@@ -5,6 +5,8 @@ from fastapi import APIRouter, HTTPException
 import polars as pl
 from pydantic import BaseModel
 
+from src.bsdc_engine.config import settings
+from src.bsdc_engine.io.sharepoint import SharePointClient
 from src.bsdc_engine.logging import get_logger
 from src.bsdc_engine.verify.key_matcher import KeyMatcher, detect_key_columns
 from src.bsdc_engine.verify.comparator import DataComparator
@@ -30,7 +32,7 @@ class VerificationRequest(BaseModel):
 def run_perform_verification(payload: VerificationRequest):
     """
     FastAPI endpoint called by n8n 'Perform Verification' node.
-    Reads Sharetec actual CSV files from centralized workspace/Actual_Sharetec directory.
+    Downloads Sharetec actual CSV files directly from SharePoint QA Team Folder.
     """
     try:
         ws = RunWorkspace(run_id=payload.run_id)
@@ -38,9 +40,52 @@ def run_perform_verification(payload: VerificationRequest):
 
         exp_dir = getattr(ws, "reconciliation_dir", None) or (run_root / "out" / "reconciliation")
         
-        # Centralized Sharetec Actual Directory in workspace
-        act_dir = Path("workspace/Actual_Sharetec")
+        # =========================================================================
+        # ### LEGACY CODE (LOCAL COMPARISON) - PRESERVED AS REQUESTED
+        # =========================================================================
+        ### act_dir = Path("workspace/Actual_Sharetec")
+        ### # use actual Sharetec data directory on SP
+        ### # act_dir = ws.raw_dir.parent / "Actual_Sharetec"
+        ### act_dir.mkdir(parents=True, exist_ok=True)
+        # =========================================================================
+
+        # =========================================================================
+        # NEW LOGIC: DYNAMICALLY FETCH DATA FROM SHAREPOINT BASED ON CU_ID
+        # =========================================================================
+        act_dir = getattr(ws, "actual_dir", None) or (ws.raw_dir.parent / "actual_sharetec")
         act_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            client = SharePointClient()
+            auto_paths = client.resolve_cu_paths(payload.cu_id)
+            
+            # Normalize all backslashes to forward slashes to prevent string splitting issues on Windows
+            sample_path = ""
+            for k in ["mapping_path", "matrix_path", "raw_data_path"]:
+                if auto_paths.get(k):
+                    sample_path = str(auto_paths[k]).replace("\\", "/")
+                    break
+
+            if "03 Info From CU" in sample_path:
+                cu_base = sample_path.split("03 Info From CU")[0].rstrip("/")
+            elif "07 Team Folders" in sample_path:
+                cu_base = sample_path.split("07 Team Folders")[0].rstrip("/")
+            else:
+                cu_base = sample_path.rstrip("/")
+
+            # Construct exact SharePoint path to QA Team Folder
+            if cu_base:
+                sp_actual_folder = f"{cu_base}/07 Team Folders/QA Team Folder/Actual_Sharetec"
+            else:
+                sp_actual_folder = f"{settings.SHAREPOINT_QA_FOLDER_REL}/Actual_Sharetec"
+
+            logger.info(f"Fetching Actual Sharetec files from SharePoint path: [{sp_actual_folder}]")
+            downloaded = client.fetch_paths([sp_actual_folder], output_dir=act_dir)
+            logger.info(f"Successfully downloaded {len(downloaded) if downloaded else 0} files into {act_dir}")
+
+        except Exception as sp_err:
+            logger.error(f"Could not fetch Actual_Sharetec from SharePoint: {sp_err}")
+        # =========================================================================
 
         if payload.section_name:
             target_files = [exp_dir / f"{payload.section_name}.csv"]
