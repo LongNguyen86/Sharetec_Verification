@@ -29,10 +29,10 @@ def assemble_worksheet_endpoint(payload: WorksheetRequest):
     """
     try:
         ws = RunWorkspace(run_id=payload.run_id)
-        run_root = ws.raw_dir.parent.parent
-        exp_dir = getattr(ws, "reconciliation_dir", None) or (run_root / "out" / "reconciliation")
+        exp_dir = getattr(ws, "reconciliation_dir", None) or (ws.out_dir / "reconciliation")
         
-        act_dir = Path("workspace/Actual_Sharetec")
+        # Use workspace actual_dir (workspace/runs//in/actual_sharetec)
+        act_dir = ws.actual_dir
         target_files = list(exp_dir.glob("*.csv"))
 
         if not target_files:
