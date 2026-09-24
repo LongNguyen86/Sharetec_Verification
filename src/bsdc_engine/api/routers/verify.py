@@ -135,7 +135,8 @@ def run_perform_verification(payload: VerificationRequest):
                 "status": "PASSED" if section_discrepancies == 0 else "FAILED"
             })
 
-        output_dir = Path("test-output")
+        # Use test_output_dir from workspace (workspace/runs//test-output)
+        output_dir = ws.test_output_dir
         VerificationReporter.generate_combined_report(all_section_results, output_dir=output_dir)
 
         overall_status = "PASSED" if overall_total_discrepancies == 0 else "FAILED"
