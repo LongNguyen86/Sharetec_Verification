@@ -35,23 +35,32 @@ def _organize_file(file_path: Path, ws: RunWorkspace) -> Path:
 @router.post("/fetch-input-files")
 def fetch_input_files(payload: FetchInputRequest):
     try:
-        # Extract run_id explicitly from payload or default to None for auto-generation
-        requested_run_id = payload.run_id if hasattr(payload, "run_id") and payload.run_id else None
-        ws = RunWorkspace(run_id=requested_run_id)
-
         client = SharePointClient()
 
-        # If paths are not explicitly provided, resolve them dynamically using cu_id
+        # 1. VALIDATE CU_ID ON SHAREPOINT BEFORE CREATING WORKSPACE DIRECTORY
         mapping_p = payload.mapping_path
         matrix_p = payload.matrix_path
         raw_p = getattr(payload, "raw_data_path", None)
 
         if not mapping_p or not matrix_p:
             auto_paths = client.resolve_cu_paths(payload.cu_id)
+            
+            # Check if CU name exists on SharePoint
+            if not auto_paths or not any(auto_paths.values()):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid CU Name [{payload.cu_id}]. No matching CU directory found on SharePoint."
+                )
+
             mapping_p = mapping_p or auto_paths.get("mapping_path")
             matrix_p = matrix_p or auto_paths.get("matrix_path")
             raw_p = raw_p or auto_paths.get("raw_data_path")
 
+        # 2. CREATE WORKSPACE ONLY AFTER CU VALIDATION PASSES
+        requested_run_id = payload.run_id if hasattr(payload, "run_id") and payload.run_id else None
+        ws = RunWorkspace(run_id=requested_run_id)
+
+        # 3. DOWNLOAD FILES FROM SHAREPOINT
         downloaded = []
         if mapping_p:
             downloaded.extend(client.fetch_paths([mapping_p], output_dir=ws.mapping_dir))
@@ -60,10 +69,13 @@ def fetch_input_files(payload: FetchInputRequest):
         if raw_p:
             downloaded.extend(client.fetch_paths([raw_p], output_dir=ws.raw_dir))
 
+        # 4. IF NO FILES DOWNLOADED, CLEAN UP CREATED WORKSPACE DIRECTORY AND RETURN ERROR
         if not downloaded:
+            if ws.base_dir.exists():
+                shutil.rmtree(ws.base_dir, ignore_errors=True)
             raise HTTPException(
                 status_code=400, 
-                detail=f"No files downloaded for CU [{payload.cu_id}]. Please check SharePoint folder existence and permissions."
+                detail=f"No files downloaded for CU [{payload.cu_id}]. Please check SharePoint folder existence."
             )
 
         final_files = [_organize_file(f, ws) for f in downloaded if f.exists()]
@@ -74,11 +86,12 @@ def fetch_input_files(payload: FetchInputRequest):
             "downloaded_files_count": len(final_files),
             "files": [str(p) for p in final_files],
         }
+
     except SharePointAuthError as e:
         logger.error(f"SharePoint Auth Failure: {e}")
         raise HTTPException(
             status_code=401,
-            detail="SharePoint Session Expired or Authentication Required. The expired session was cleared. Please re-run the step to complete 2FA on your phone."
+            detail="SharePoint Session Expired or Authentication Required. Please re-run 2FA authentication."
         )
     except HTTPException:
         raise
