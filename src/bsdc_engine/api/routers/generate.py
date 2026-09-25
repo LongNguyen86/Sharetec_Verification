@@ -33,6 +33,11 @@ def generate_transformed_data(payload: GenerateDataRequest):
 
         # Execute data transformation across all mapped sections
         results = builder.generate_all(cu_id=payload.cu_id)
+        if not results:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"No raw data files found in directory for run_id: {payload.run_id}"
+            )
 
         logger.info(
             f"Successfully generated {len(results)} transformed CSV files for run_id: {payload.run_id}"
