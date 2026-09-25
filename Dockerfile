@@ -31,4 +31,4 @@ EXPOSE 5678
 
 ENV DISPLAY=:99
 
-CMD ["sh", "-c", "Xvfb :99 -ac -screen 0 1024x768x24 & sleep 1 && python3 -m uvicorn src.bsdc_engine.api.app:app --host 0.0.0.0 --port 8000 & n8n import:workflow --input=/home/node/app/n8n_workflows/BSDC_Workflows.json && n8n start"]
+CMD ["sh", "-c", "Xvfb :99 -ac -screen 0 1024x768x24 & sleep 1 && python3 -m uvicorn src.bsdc_engine.api.app:app --host 0.0.0.0 --port 8000 & n8n import:workflow --separate --input=/home/node/app/n8n_workflows/ && n8n start"]

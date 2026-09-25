@@ -7,23 +7,22 @@
         "url": "={{ $json.api_base_url }}api/v1/fetch-input-files",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Sharepoint Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Sharepoint Path').item.json.cu_id }}\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        440,
-        0
+        700,
+        -100
       ],
       "id": "2721873a-86b5-4c38-9c84-36f2a37cad7f",
-      "name": "Fetch Input Files",
-      "onError": "continueRegularOutput"
+      "name": "Fetch Input Files"
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/convert-to-csv",
+        "url": "={{ $('Set Sharepoint Path').item.json.api_base_url }}api/v1/convert-to-csv",
         "sendBody": true,
         "specifyBody": "=json",
         "bodyParameters": {
@@ -31,35 +30,192 @@
             {}
           ]
         },
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Sharepoint Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Sharepoint Path').item.json.cu_id }}\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        660,
-        0
+        960,
+        -100
       ],
       "id": "96d5f41b-0813-4e4c-85c2-c0613be23bae",
-      "name": "Convert to CSV"
+      "name": "Convert to CSV",
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/validate-mapping",
+        "url": "={{ $('Set Sharepoint Path').item.json.api_base_url }}api/v1/validate-mapping",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Sharepoint Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Sharepoint Path').item.json.cu_id }}\"\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        880,
-        0
+        1240,
+        -100
       ],
       "id": "7636a26c-4367-446d-bc28-2bc0061147f4",
       "name": "Validate the mapping file"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Set Sharepoint Path').item.json.api_base_url }}api/v1/rules/parse",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Sharepoint Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Sharepoint Path').item.json.cu_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1520,
+        -100
+      ],
+      "id": "2dc81ba4-51e8-4b64-afbd-5f146ffdda64",
+      "name": "Parse Rules"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Set Sharepoint Path').item.json.api_base_url }}api/v1/rules/ai-parse",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Sharepoint Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Sharepoint Path').item.json.cu_id }}\"\n}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        180,
+        120
+      ],
+      "id": "d1b23007-06ec-4294-b974-35a11c6c23a6",
+      "name": "AI Parse",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Set Sharepoint Path').item.json.api_base_url }}api/v1/rules/export-verification-report",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Sharepoint Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Sharepoint Path').item.json.cu_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        420,
+        120
+      ],
+      "id": "8fe52cd7-5ac9-44a1-98e6-9fca8eb56975",
+      "name": "Rule Verification Report"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Set Sharepoint Path').item.json.api_base_url }}api/v1/rules/apply-qa-decisions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Sharepoint Path').item.json.run_id }}\",\n  \"report_filename\": \"Rule_Verification_Report_{{ $('Set Sharepoint Path').item.json.cu_id }}.xlsx\",\n  \"cu_id\": \"{{ $('Set Sharepoint Path').item.json.cu_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1240,
+        120
+      ],
+      "id": "ccfce7d5-66af-472d-97c2-ebe19cd0309a",
+      "name": "Apply QA Decisions"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Set Sharepoint Path').item.json.api_base_url }}api/v1/generate/data",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Sharepoint Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Sharepoint Path').item.json.cu_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        120
+      ],
+      "id": "fa1a2d5c-40ca-4981-8750-bb9eae1bce68",
+      "name": "Generate Transform Data"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Set Sharepoint Path').item.json.api_base_url }}api/v1/verify/run",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Sharepoint Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Sharepoint Path').item.json.cu_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        180,
+        340
+      ],
+      "id": "aa8e63c7-2d6e-460f-98dc-4a3062b81ab1",
+      "name": "Perform Verification"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Set Sharepoint Path').item.json.api_base_url }}api/v1/worksheet/assemble",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Sharepoint Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Sharepoint Path').item.json.cu_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1240,
+        340
+      ],
+      "id": "5c53d50d-9160-43e0-911f-f16ca40d1221",
+      "name": "Record the Verification"
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.stdout.trim().replaceAll('\\\\', '/') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        700,
+        340
+      ],
+      "id": "9b2b3a07-ab48-432c-9be2-5e831f1f26ef",
+      "name": "Read/Write Files from Disk"
+    },
+    {
+      "parameters": {
+        "command": "=cd /d D:\\BSDC\\BSDC_Ingest_Engine && python -c \"import zipfile, os; run_id='{{ $('Set Sharepoint Path').item.json.run_id }}'; zip_p = os.path.abspath(f'workspace/results_{run_id}.zip'); z = zipfile.ZipFile(zip_p, 'w', zipfile.ZIP_DEFLATED); targets = [f'workspace/runs/{run_id}', 'test-output']; [z.write(os.path.join(r, f)) for t in targets if os.path.exists(t) for r, d, fs in os.walk(t) for f in fs if not f.startswith('.')]; z.close(); print(zip_p)\""
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        420,
+        340
+      ],
+      "id": "02cf2f94-39e2-4148-883a-b319d927d6d1",
+      "name": "Zip Files Result"
     },
     {
       "parameters": {
@@ -74,10 +230,11 @@
             }
           ]
         },
+        "responseMode": "lastNode",
         "options": {
           "respondWithOptions": {
             "values": {
-              "formSubmittedText": "Your request has been successfully received! The system is processing it automatically in the background, and the results will be sent to your email within a few minutes."
+              "formSubmittedText": "Your request is being processed and is currently awaiting review. Please check your email for further updates!"
             }
           }
         }
@@ -85,11 +242,11 @@
       "type": "n8n-nodes-base.formTrigger",
       "typeVersion": 2.2,
       "position": [
-        0,
-        0
+        180,
+        -100
       ],
       "id": "1b4399bc-c89c-4d1e-b5cb-ea7e371a2360",
-      "name": "On form submission",
+      "name": "Input CU Name",
       "webhookId": "4c651dec-dd26-4ee7-bcc0-38bb755d0060"
     },
     {
@@ -121,68 +278,35 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        220,
-        0
+        420,
+        -100
       ],
       "id": "e652517b-003c-41b5-91ed-06b814163f6e",
-      "name": "Set Path"
+      "name": "Set Sharepoint Path"
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/rules/parse",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
+        "fromEmail": "dragon9968@gmail.com",
+        "toEmail": "dinhlong.nguyen@evizi.com",
+        "subject": "=BSDC Ingest] Need to review Rule Verification Report - {{ $('Set Sharepoint Path').item.json.cu_id }}",
+        "html": "=<div style=\"font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px;\">\n  <h2 style=\"color: #0056b3; margin-top: 0;\">📢 Rule Verification Report - Action Required</h2>\n  <p>The <b>Rule Verification Report</b> for Credit Union <b>{{ $('Set Sharepoint Path').item.json.cu_id }}</b> has been successfully generated and uploaded to SharePoint.</p>\n  \n  <div style=\"background-color: #f8f9fa; padding: 15px; border-left: 4px solid #0056b3; margin: 20px 0;\">\n    <p style=\"margin: 0 0 10px 0;\"><b>Step 1:</b> Open the Excel report on SharePoint and update the <i>Approved / Rejected</i> status for the pending rules.</p>\n    <p style=\"margin: 0;\"><b>Step 2:</b> Once reviewed, click the button below to proceed with saving the updated decisions into the database.</p>\n  </div>\n  \n  <p style=\"text-align: center; margin: 30px 0;\">\n    <a href=\"{{ $execution.resumeUrl }}\" \n       style=\"background-color: #28a745; color: white; padding: 14px 24px; text-decoration: none; font-weight: bold; border-radius: 5px; display: inline-block; font-size: 15px;\">\n       ✅ Confirm QA Completion\n    </a>\n  </p>\n  \n  <hr style=\"border: 0; border-top: 1px solid #eee; margin-top: 30px;\" />\n  <p style=\"color: #888; font-size: 12px; text-align: center; margin: 0;\">This is an automated message sent from the BSDC Data Ingest System.</p>\n</div>",
         "options": {}
       },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
       "position": [
-        1100,
-        0
+        700,
+        120
       ],
-      "id": "2dc81ba4-51e8-4b64-afbd-5f146ffdda64",
-      "name": "Parse Rules"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/rules/ai-parse",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
-        "options": {
-          "timeout": 600000
+      "id": "87f70b55-e089-4fdc-b3f2-c15e4e6cf481",
+      "name": "Send Email to Review Rules",
+      "webhookId": "3110f056-043b-4426-94c1-aba2da95a1e8",
+      "credentials": {
+        "smtp": {
+          "id": "z07NoaD5xvJ0lixc",
+          "name": "SMTP account 2"
         }
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        0,
-        220
-      ],
-      "id": "d1b23007-06ec-4294-b974-35a11c6c23a6",
-      "name": "AI Parse",
-      "onError": "continueErrorOutput"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/rules/export-verification-report",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        220,
-        220
-      ],
-      "id": "8fe52cd7-5ac9-44a1-98e6-9fca8eb56975",
-      "name": "Rule Verification Report"
+      }
     },
     {
       "parameters": {
@@ -202,128 +326,18 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        660,
-        220
+        960,
+        120
       ],
       "id": "8659c4a5-64dd-48e5-b286-9f447c641471",
-      "name": "Wait",
+      "name": "Wait to Review",
       "webhookId": "c9bda2aa-dc72-4be7-98b9-71eaa0ab820a"
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/rules/apply-qa-decisions",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"report_filename\": \"Rule_Verification_Report_{{ $('Set Path').item.json.cu_id }}.xlsx\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        880,
-        220
-      ],
-      "id": "ccfce7d5-66af-472d-97c2-ebe19cd0309a",
-      "name": "Apply QA Decisions"
-    },
-    {
-      "parameters": {
         "fromEmail": "dragon9968@gmail.com",
         "toEmail": "dinhlong.nguyen@evizi.com",
-        "subject": "=BSDC Ingest] Need to review Rule Verification Report - {{ $('Set Path').item.json.cu_id }}",
-        "html": "=<div style=\"font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px;\">\n  <h2 style=\"color: #0056b3; margin-top: 0;\">📢 Rule Verification Report - Action Required</h2>\n  <p>The <b>Rule Verification Report</b> for Credit Union <b>{{ $('Set Path').item.json.cu_id }}</b> has been successfully generated and uploaded to SharePoint.</p>\n  \n  <div style=\"background-color: #f8f9fa; padding: 15px; border-left: 4px solid #0056b3; margin: 20px 0;\">\n    <p style=\"margin: 0 0 10px 0;\"><b>Step 1:</b> Open the Excel report on SharePoint and update the <i>Approved / Rejected</i> status for the pending rules.</p>\n    <p style=\"margin: 0;\"><b>Step 2:</b> Once reviewed, click the button below to proceed with saving the updated decisions into the database.</p>\n  </div>\n  \n  <p style=\"text-align: center; margin: 30px 0;\">\n    <a href=\"{{ $execution.resumeUrl }}\" \n       style=\"background-color: #28a745; color: white; padding: 14px 24px; text-decoration: none; font-weight: bold; border-radius: 5px; display: inline-block; font-size: 15px;\">\n       ✅ Confirm QA Completion\n    </a>\n  </p>\n  \n  <hr style=\"border: 0; border-top: 1px solid #eee; margin-top: 30px;\" />\n  <p style=\"color: #888; font-size: 12px; text-align: center; margin: 0;\">This is an automated message sent from the BSDC Data Ingest System.</p>\n</div>",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.emailSend",
-      "typeVersion": 2.1,
-      "position": [
-        440,
-        220
-      ],
-      "id": "87f70b55-e089-4fdc-b3f2-c15e4e6cf481",
-      "name": "Send Email",
-      "webhookId": "3110f056-043b-4426-94c1-aba2da95a1e8",
-      "credentials": {
-        "smtp": {
-          "id": "z07NoaD5xvJ0lixc",
-          "name": "SMTP account 2"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/generate/data",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        0,
-        440
-      ],
-      "id": "fa1a2d5c-40ca-4981-8750-bb9eae1bce68",
-      "name": "Generate Transform Data"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/verify/run",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        220,
-        440
-      ],
-      "id": "aa8e63c7-2d6e-460f-98dc-4a3062b81ab1",
-      "name": "Perform Verification"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $('Set Path').item.json.api_base_url }}api/v1/worksheet/assemble",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"run_id\": \"{{ $('Set Path').item.json.run_id }}\",\n  \"cu_id\": \"{{ $('Set Path').item.json.cu_id }}\"\n}",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1100,
-        440
-      ],
-      "id": "5c53d50d-9160-43e0-911f-f16ca40d1221",
-      "name": "Record the Verification"
-    },
-    {
-      "parameters": {
-        "fileSelector": "={{ $json.stdout.trim().replaceAll('\\\\', '/') }}",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.readWriteFile",
-      "typeVersion": 1,
-      "position": [
-        660,
-        440
-      ],
-      "id": "9b2b3a07-ab48-432c-9be2-5e831f1f26ef",
-      "name": "Read/Write Files from Disk"
-    },
-    {
-      "parameters": {
-        "fromEmail": "dragon9968@gmail.com",
-        "toEmail": "dinhlong.nguyen@evizi.com",
-        "subject": "=BSDC Ingest - Full Execution Results - {{ $('Set Path').item.json.cu_id }}",
+        "subject": "=BSDC Ingest - Full Execution Results - {{ $('Set Sharepoint Path').item.json.cu_id }}",
         "html": "<p>Hello,</p>\n<p>The BSDC Ingest system has completed the entire processing workflow.</p>\n<p>The attached zip file contains the complete report data from the <b>runs</b> and <b>test-output</b> directories on the VPS.</p>",
         "options": {
           "attachments": "data"
@@ -332,31 +346,19 @@
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "position": [
-        880,
-        440
+        960,
+        340
       ],
       "id": "8575a089-a8c8-4f0a-bd63-54442d6001b9",
-      "name": "Send Email1",
+      "name": "Send the Result to Email",
       "webhookId": "14f96d0b-d22e-407a-afc3-49983bc3d47a",
+      "retryOnFail": true,
       "credentials": {
         "smtp": {
           "id": "z07NoaD5xvJ0lixc",
           "name": "SMTP account 2"
         }
       }
-    },
-    {
-      "parameters": {
-        "command": "=cd /d D:\\BSDC\\BSDC_Ingest_Engine && python -c \"import zipfile, os; run_id='{{ $('Set Path').item.json.run_id }}'; zip_p = os.path.abspath(f'workspace/results_{run_id}.zip'); z = zipfile.ZipFile(zip_p, 'w', zipfile.ZIP_DEFLATED); targets = [f'workspace/runs/{run_id}', 'test-output']; [z.write(os.path.join(r, f)) for t in targets if os.path.exists(t) for r, d, fs in os.walk(t) for f in fs if not f.startswith('.')]; z.close(); print(zip_p)\""
-      },
-      "type": "n8n-nodes-base.executeCommand",
-      "typeVersion": 1,
-      "position": [
-        440,
-        440
-      ],
-      "id": "02cf2f94-39e2-4148-883a-b319d927d6d1",
-      "name": "Zip Files Result"
     }
   ],
   "pinData": {},
@@ -369,7 +371,8 @@
             "type": "main",
             "index": 0
           }
-        ]
+        ],
+        []
       ]
     },
     "Convert to CSV": {
@@ -377,28 +380,6 @@
         [
           {
             "node": "Validate the mapping file",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "On form submission": {
-      "main": [
-        [
-          {
-            "node": "Set Path",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Set Path": {
-      "main": [
-        [
-          {
-            "node": "Fetch Input Files",
             "type": "main",
             "index": 0
           }
@@ -442,29 +423,7 @@
       "main": [
         [
           {
-            "node": "Send Email",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Wait": {
-      "main": [
-        [
-          {
-            "node": "Apply QA Decisions",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Email": {
-      "main": [
-        [
-          {
-            "node": "Wait",
+            "node": "Send Email to Review Rules",
             "type": "main",
             "index": 0
           }
@@ -508,18 +467,7 @@
       "main": [
         [
           {
-            "node": "Send Email1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Email1": {
-      "main": [
-        [
-          {
-            "node": "Record the Verification",
+            "node": "Send the Result to Email",
             "type": "main",
             "index": 0
           }
@@ -536,13 +484,75 @@
           }
         ]
       ]
+    },
+    "Input CU Name": {
+      "main": [
+        [
+          {
+            "node": "Set Sharepoint Path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Sharepoint Path": {
+      "main": [
+        [
+          {
+            "node": "Fetch Input Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email to Review Rules": {
+      "main": [
+        [
+          {
+            "node": "Wait to Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait to Review": {
+      "main": [
+        [
+          {
+            "node": "Apply QA Decisions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send the Result to Email": {
+      "main": [
+        [
+          {
+            "node": "Record the Verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record the Verification": {
+      "main": [
+        []
+      ]
     }
   },
   "active": true,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "a4abzHrvMqCNYY9k"
   },
-  "versionId": "2dc72db5-904f-442e-bdfb-7354ada9b017",
+  "versionId": "eb1ef381-2149-4dbb-a7ff-a2ed8499a1ad",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "7e4ab5b15df44e4fdbde799614bf980ec37978041426198882a1d59e9c97067d"
