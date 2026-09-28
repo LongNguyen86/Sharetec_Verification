@@ -8,6 +8,8 @@ services:
       - "5678:5678"
     environment:
       - NODES_EXCLUDE=[]
+      - N8N_SECURE_COOKIE=false
+      - WEBHOOK_URL=http://161.118.198.37:5678/
     volumes:
       # Mount current directory to container app directory for live updates
       - .:/home/node/app

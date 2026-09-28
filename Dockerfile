@@ -25,7 +25,7 @@ RUN pip3 install --no-cache-dir . --break-system-packages
 # Install Playwright Chromium Browser and Dependencies
 RUN python3 -m playwright install chromium --with-deps
 RUN apt-get update && apt-get install -y xvfb
-EXPOSE 5678
+EXPOSE 5678 8000
 
 # Import workflow and start n8n server on container launch
 
