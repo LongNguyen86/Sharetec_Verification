@@ -4,20 +4,32 @@ from pydantic import BaseModel
 from src.bsdc_engine.workspace import RunWorkspace
 from src.bsdc_engine.validate.mapping import MappingValidator
 from src.bsdc_engine.logging import get_logger
-
+import re
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["Validation"])
 
 
 class ValidateRequest(BaseModel):
     run_id: str
+    cu_id: str | None = None
 
 
 @router.post("/validate-mapping")
 def validate_mapping(payload: ValidateRequest):
     try:
         ws = RunWorkspace(run_id=payload.run_id)
-        # Point raw_dir to ws.mapping_dir where mapping files are stored
+
+        # Clean up any non-matching mapping files before validation
+        # Clean up any non-matching mapping files before validation (Case-Insensitive)
+        if payload.cu_id and ws.mapping_dir.exists():
+            clean_cu = re.sub(r'[^a-z0-9]', '', payload.cu_id.lower())
+            for f in list(ws.mapping_dir.glob("*.xlsx")):
+                if "mapping" in f.name.lower():
+                    clean_fname = re.sub(r'[^a-z0-9]', '', f.name.lower())
+                    if clean_cu not in clean_fname:
+                        logger.info(f"Filtering out non-matching mapping file: {f.name} for CU [{payload.cu_id}]")
+                        f.unlink(missing_ok=True)
+
         validator = MappingValidator(raw_dir=ws.mapping_dir, output_report_dir=ws.qa_reports_dir)
         is_passed, errors = validator.validate()
 
