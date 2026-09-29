@@ -1,6 +1,7 @@
 import json
 import re
 from pathlib import Path
+from typing import Union, List
 import polars as pl
 
 from src.bsdc_engine.io.raw_reader import load_raw_tables
@@ -16,20 +17,42 @@ logger = get_logger(__name__)
 
 
 class TransformationBuilder:
-    def __init__(self, raw_data_dir: Path, output_dir: Path, db_path: Path | None = None):
-        self.raw_data_dir = Path(raw_data_dir)
+    def __init__(
+        self,
+        raw_data_dir: Union[Path, str, List[Union[Path, str]]],
+        output_dir: Path,
+        db_path: Path | None = None,
+    ):
+        # Support both a single directory path and a list of directory paths
+        if isinstance(raw_data_dir, (list, tuple)):
+            self.raw_data_dirs = [Path(d) for d in raw_data_dir]
+        else:
+            self.raw_data_dirs = [Path(raw_data_dir)]
+
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.rule_store = RuleStore(db_path=db_path)
-        
+
         self.conditional_executor = ConditionalExecutor()
         self.direct_executor = DirectExecutor()
         self.constant_executor = ConstantExecutor(conditional_executor=self.conditional_executor)
 
     def generate_all(self, cu_id: str) -> list[GenerateResult]:
-        tables = load_raw_tables(self.raw_data_dir)
+        # Load raw CSV tables across all configured input directories with priority to earlier sources
+        tables = {}
+        for d in self.raw_data_dirs:
+            if d.exists():
+                dir_tables = load_raw_tables(d)
+                if dir_tables:
+                    for table_key, df in dir_tables.items():
+                        # Preserve existing table if already loaded from higher priority directory
+                        if table_key not in tables:
+                            tables[table_key] = df
+
         if not tables:
-            logger.error(f"No Raw Data CSV files found in {self.raw_data_dir}")
+            logger.error(
+                f"No Raw Data CSV files found in directories: {[str(d) for d in self.raw_data_dirs]}"
+            )
             return []
 
         results = []

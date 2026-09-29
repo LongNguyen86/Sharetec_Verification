@@ -8,6 +8,7 @@ class FetchInputRequest(BaseModel):
     mapping_path: Optional[str] = None
     raw_data_path: Optional[str] = None
     matrix_path: Optional[str] = None
+    actual_path: str | None = None
 
 
 class TableSpec(BaseModel):
