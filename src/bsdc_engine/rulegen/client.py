@@ -1,7 +1,5 @@
 import os
 import json
-import re
-import time
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -12,14 +10,13 @@ from src.bsdc_engine.rulegen.prompts import build_batch_prompt
 
 logger = get_logger(__name__)
 
-# Automatically load environment variables from .env file
 load_dotenv()
 
 
 class LLMParserClient:
-    """Client for interacting with Google Gemini API with batching and retry logic."""
+    """Client for interacting with Google Gemini API without retries."""
 
-    def __init__(self, model_name: str = "gemini-3.6-flash", max_retries: int = 5):
+    def __init__(self, model_name: str = "gemini-3.6-flash"):
         api_key = (
             os.getenv("GEMINI_API_KEY")
             or os.getenv("GOOGLE_API_KEY")
@@ -30,53 +27,41 @@ class LLMParserClient:
             logger.warning("GEMINI_API_KEY or GOOGLE_API_KEY not configured in environment or .env file!")
         self.client = genai.Client(api_key=api_key) if api_key else None
         self.model_name = model_name
-        self.max_retries = max_retries
 
-    def call_gemini_batch_with_retry(self, prompt: str) -> str:
-        """Invoke Gemini API using google-genai SDK with retry logic for 429 and 503 errors."""
+    def call_gemini_batch(self, prompt: str) -> str:
+        """Invoke Gemini API directly in a single request without retry attempts."""
         if not self.client:
             raise RuntimeError("Gemini API Client is not initialized due to missing API key!")
 
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                response = self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.1,
-                    ),
-                )
-                return response.text
-            except Exception as e:
-                err_msg = str(e)
-                if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                    wait_time = 20
-                    logger.warning(
-                        f"   ⏳ [Rate Limit 429 Hit] Reached RPM ceiling. Pausing for {wait_time}s "
-                        f"(Attempt {attempt}/{self.max_retries})..."
-                    )
-                    time.sleep(wait_time)
-                elif "503" in err_msg or "UNAVAILABLE" in err_msg:
-                    wait_time = 8
-                    logger.warning(
-                        f"   ⏳ [Google Server Overload 503] Temporary high demand. Retrying in {wait_time}s "
-                        f"(Attempt {attempt}/{self.max_retries})..."
-                    )
-                    time.sleep(wait_time)
-                else:
-                    logger.error(f"   ❌ API Error: {e}")
-                    time.sleep(5)
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                ),
+            )
+            return response.text
+        except Exception as e:
+            logger.error(f"Gemini API execution error: {e}")
+            raise e
 
-        raise RuntimeError("Maximum retries exceeded due to Gemini API errors!")
+    def call_gemini_batch_with_retry(self, prompt: str) -> str:
+        """Alias for backward compatibility, executes once without retries."""
+        return self.call_gemini_batch(prompt)
 
     def parse_rules_with_llm_batch(self, rules_batch: list[dict]) -> list[dict]:
         """Create a batch prompt for mapping rules and send a single request to Gemini."""
         prompt = build_batch_prompt(rules_batch)
-        response_text = self.call_gemini_batch_with_retry(prompt)
+        response_text = self.call_gemini_batch(prompt)
 
         try:
-            json_match = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", response_text, re.DOTALL)
-            clean_json_str = json_match.group(1) if json_match else response_text.strip()
+            start_idx = response_text.find("[")
+            end_idx = response_text.rfind("]")
+            if start_idx != -1 and end_idx != -1:
+                clean_json_str = response_text[start_idx : end_idx + 1]
+            else:
+                clean_json_str = response_text.strip()
             parsed_results = json.loads(clean_json_str)
             return parsed_results
         except Exception as e:
