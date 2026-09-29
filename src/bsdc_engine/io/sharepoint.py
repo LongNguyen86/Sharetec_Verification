@@ -1,4 +1,5 @@
 import os
+import re
 import urllib.parse
 from pathlib import Path
 from playwright.sync_api import sync_playwright
@@ -11,13 +12,6 @@ from src.bsdc_engine.text import clean_sharepoint_path
 logger = get_logger(__name__)
 
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xlsm", ".xls"}
-
-# Spoof exact Windows Chrome User-Agent to prevent Microsoft from blocking transferred sessions from Local
-WINDOWS_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/122.0.0.0 Safari/537.36"
-)
 
 
 class SharePointClient:
@@ -40,41 +34,81 @@ class SharePointClient:
         return f"{site_path}/{clean_p}"
 
     def _cleanup_expired_session(self, reason: str = ""):
-        """Log a warning without automatically deleting state.json from disk."""
+        """Delete the expired state.json file from disk so a new session can be generated."""
         if self.session_file.exists():
-            logger.warning(f"Session warning: {reason}. Keeping state.json on disk.")
-
-    def _ensure_authenticated(self):
-        """Ensure state.json exists. Never launch browser on Server environment."""
-        if not self.session_file.exists():
-            logger.error(f"Missing session file at: {self.session_file}")
-            raise SharePointAuthError(
-                "Missing state.json on Server! "
-                "Please copy state.json from Local to workspace/.auth/ on VPS."
-            )
-
-    def _get_request_context(self, p):
-        """Create Playwright request context matching 100% Windows Chrome fingerprint from Local."""
-        self._ensure_authenticated()
-        return p.request.new_context(
-            storage_state=str(self.session_file),
-            user_agent=WINDOWS_USER_AGENT,
-            extra_http_headers={
-                "Accept-Language": "en-US,en;q=0.9,vi;q=0.8",
-                "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-                "Sec-Ch-Ua-Mobile": "?0",
-                "Sec-Ch-Ua-Platform": '"Windows"',
-            }
-        )
+            try:
+                self.session_file.unlink()
+                logger.info(f"Auto-deleted expired session file (state.json). Reason: {reason}")
+            except Exception as e:
+                logger.error(f"Failed to delete state.json: {e}")
 
     def _is_html_response(self, content_bytes: bytes) -> bool:
-        """Check if response body is an HTML login redirect page."""
+        """Check if response is HTML login page, indicating expired authentication."""
         content_head = content_bytes[:500].decode("utf-8", errors="ignore").lower()
-        return ("<" + "html") in content_head or ("<" + "!doctype") in content_head
+        return "doctype" in content_head or "html" in content_head
+
+    def _ensure_authenticated(self, p=None, force_reauth: bool = False):
+        """Check if state.json exists. If missing or force_reauth is True, open browser for login and 2FA."""
+        if self.session_file.exists() and not force_reauth:
+            return
+
+        logger.info("No valid session found or re-auth forced! Launching browser for SharePoint authentication...")
+
+        def _login_flow(playwright_obj):
+            browser = playwright_obj.chromium.launch(headless=False)
+            context = browser.new_context()
+            page = context.new_page()
+            page.goto(self.site_url)
+
+            # 1. Auto-fill Username/Email if prompt is visible
+            try:
+                email_input = page.wait_for_selector('input[type="email"], input[name="loginfmt"]', timeout=8000)
+                if email_input and self.username:
+                    logger.info("Auto-filling Username...")
+                    email_input.fill(self.username)
+                    page.click('input[type="submit"], #idSIButton9')
+                    page.wait_for_timeout(2000)
+            except Exception:
+                logger.info("Username prompt skipped or already populated.")
+
+            # 2. Auto-fill Password if prompt is visible
+            try:
+                password_input = page.wait_for_selector('input[type="password"], input[name="passwd"]', timeout=8000)
+                if password_input and self.password:
+                    logger.info("Auto-filling Password...")
+                    password_input.fill(self.password)
+                    page.click('input[type="submit"], #idSIButton9')
+            except Exception:
+                logger.info("Password prompt skipped.")
+
+            logger.info("PLEASE APPROVE 2FA AUTHENTICATION ON YOUR PHONE (Max 2 minutes)...")
+
+            try:
+                page.wait_for_url(re.compile(r".*sharepoint\.com.*", re.IGNORECASE), timeout=120000)
+                try:
+                    stay_signed_in = page.query_selector("#idSIButton9")
+                    if stay_signed_in:
+                        stay_signed_in.click()
+                except Exception:
+                    pass
+
+                page.wait_for_timeout(5000)
+                context.storage_state(path=str(self.session_file))
+                logger.info("Authentication successful! Saved new session to workspace/.auth/state.json")
+            except Exception:
+                self._cleanup_expired_session("Timeout during 2FA login process.")
+                raise SharePointAuthError("Exceeded 2 minutes without completing login/2FA on phone!")
+            finally:
+                browser.close()
+
+        if p is not None:
+            _login_flow(p)
+        else:
+            with sync_playwright() as pw:
+                _login_flow(pw)
 
     def download_file_by_path(self, server_relative_url: str, output_dir: Path) -> Path | None:
         output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
         file_name = Path(server_relative_url).name
         ext = Path(file_name).suffix.lower()
 
@@ -95,17 +129,24 @@ class SharePointClient:
         }
 
         with sync_playwright() as p:
-            request_context = self._get_request_context(p)
+            self._ensure_authenticated(p)
+            request_context = p.request.new_context(storage_state=str(self.session_file))
             response = request_context.get(api_endpoint, headers=headers, timeout=300000)
 
-            body_bytes = response.body()
-            if response.status in (401, 403) or self._is_html_response(body_bytes):
-                self._cleanup_expired_session(f"API status {response.status}")
-                raise SharePointAuthError(f"Session state.json expired or rejected while downloading [{file_name}].")
+            # Auto trigger 2FA re-authentication if session expired
+            if response.status in (401, 403) or self._is_html_response(response.body()):
+                logger.warning(f"Session expired fetching [{file_name}]. Launching 2FA login automatically...")
+                self._cleanup_expired_session("Expired session detected")
+                self._ensure_authenticated(p, force_reauth=True)
+                request_context = p.request.new_context(storage_state=str(self.session_file))
+                response = request_context.get(api_endpoint, headers=headers, timeout=300000)
 
             if response.status == 200:
+                file_bytes = response.body()
+                if self._is_html_response(file_bytes):
+                    raise SharePointAuthError(f"Failed to fetch [{file_name}]: Received HTML after re-authentication.")
                 dest_file = output_dir / file_name
-                dest_file.write_bytes(body_bytes)
+                dest_file.write_bytes(file_bytes)
                 logger.info(f"Successfully downloaded file: {file_name}")
                 return dest_file
             else:
@@ -129,16 +170,24 @@ class SharePointClient:
         }
 
         with sync_playwright() as p:
-            request_context = self._get_request_context(p)
+            self._ensure_authenticated(p)
+            request_context = p.request.new_context(storage_state=str(self.session_file))
             response = request_context.get(api_endpoint, headers=headers, timeout=300000)
 
-            body_bytes = response.body()
-            if response.status in (401, 403) or self._is_html_response(body_bytes):
-                self._cleanup_expired_session(f"Folder status {response.status}")
-                raise SharePointAuthError(f"Session state.json expired while fetching folder [{folder_relative_path}].")
+            # Auto trigger 2FA re-authentication if session expired
+            if response.status in (401, 403) or self._is_html_response(response.body()):
+                logger.warning(f"Session expired fetching folder [{folder_relative_path}]. Launching 2FA login automatically...")
+                self._cleanup_expired_session("Expired session detected")
+                self._ensure_authenticated(p, force_reauth=True)
+                request_context = p.request.new_context(storage_state=str(self.session_file))
+                response = request_context.get(api_endpoint, headers=headers, timeout=300000)
 
             if response.status != 200:
                 logger.warning(f"Failed to fetch folder [{folder_relative_path}]. Status: {response.status}")
+                return []
+
+            body_bytes = response.body()
+            if self._is_html_response(body_bytes):
                 return []
 
             try:
@@ -228,17 +277,26 @@ class SharePointClient:
         )
 
         with sync_playwright() as p:
-            request_context = self._get_request_context(p)
+            self._ensure_authenticated(p)
+            request_context = p.request.new_context(storage_state=str(self.session_file))
 
             digest_resp = request_context.post(
                 context_info_url,
                 headers={"Accept": "application/json;odata=verbose"},
-                timeout=300000,
+                timeout=30000,
             )
 
+            # Auto trigger 2FA re-authentication if session expired
             if digest_resp.status in (401, 403) or self._is_html_response(digest_resp.body()):
-                self._cleanup_expired_session("Upload digest auth failed.")
-                raise SharePointAuthError("SharePoint session expired while fetching FormDigest for upload.")
+                logger.warning(f"Session expired fetching FormDigest. Launching 2FA login automatically...")
+                self._cleanup_expired_session("Expired session detected")
+                self._ensure_authenticated(p, force_reauth=True)
+                request_context = p.request.new_context(storage_state=str(self.session_file))
+                digest_resp = request_context.post(
+                    context_info_url,
+                    headers={"Accept": "application/json;odata=verbose"},
+                    timeout=30000,
+                )
 
             request_digest = ""
             if digest_resp.status == 200:
@@ -270,9 +328,6 @@ class SharePointClient:
             if response.status in [200, 201]:
                 logger.info(f"Successfully uploaded [{file_name}] to SharePoint: {target_folder_path}")
                 return True
-            elif response.status in (401, 403):
-                self._cleanup_expired_session("Upload POST auth failed.")
-                raise SharePointAuthError("SharePoint session expired during file upload.")
             else:
                 logger.error(f"Failed to upload file to SharePoint. Status: {response.status}")
                 return False
@@ -291,34 +346,30 @@ class SharePointClient:
         full_parent_path = self._ensure_server_relative_url(clean_parent)
         escaped_parent = full_parent_path.replace("'", "''")
         encoded_parent = urllib.parse.quote(escaped_parent, safe='/$()')
-
         api_endpoint = f"{self.site_url}/_api/web/getfolderbyserverrelativeurl('{encoded_parent}')/folders"
 
         target_cu_folder = None
         with sync_playwright() as p:
-            request_context = self._get_request_context(p)
-            response = request_context.get(
-                api_endpoint,
-                headers={"Accept": "application/json;odata=verbose"},
-                timeout=300000,
-            )
+            self._ensure_authenticated(p)
+            request_context = p.request.new_context(storage_state=str(self.session_file))
+            response = request_context.get(api_endpoint, headers={"Accept": "application/json;odata=verbose"})
 
-            body_bytes = response.body()
-            if response.status in (401, 403) or self._is_html_response(body_bytes):
-                self._cleanup_expired_session("resolve_cu_paths auth failed.")
-                raise SharePointAuthError("SharePoint session (state.json) expired or rejected.")
+            # Auto trigger 2FA re-authentication if session expired
+            if response.status in (401, 403) or self._is_html_response(response.body()):
+                logger.warning("Session expired in resolve_cu_paths. Launching 2FA login automatically...")
+                self._cleanup_expired_session("Expired session detected")
+                self._ensure_authenticated(p, force_reauth=True)
+                request_context = p.request.new_context(storage_state=str(self.session_file))
+                response = request_context.get(api_endpoint, headers={"Accept": "application/json;odata=verbose"})
 
             if response.status == 200:
-                try:
-                    folders = response.json().get("d", {}).get("results", [])
-                    for f in folders:
-                        folder_name = f.get("Name", "").upper()
-                        if cu_clean in folder_name or (cu_token and cu_token in folder_name):
-                            target_cu_folder = f.get("ServerRelativeUrl", "")
-                            logger.info(f"Dynamically resolved CU [{cu_id}] raw directory -> {target_cu_folder}")
-                            break
-                except Exception:
-                    raise SharePointAuthError("SharePoint returned invalid JSON response.")
+                folders = response.json().get("d", {}).get("results", [])
+                for f in folders:
+                    folder_name = f.get("Name", "").upper()
+                    if cu_clean in folder_name or (cu_token and cu_token in folder_name):
+                        target_cu_folder = f.get("ServerRelativeUrl", "")
+                        logger.info(f"Dynamically resolved CU [{cu_id}] raw directory -> {target_cu_folder}")
+                        break
 
         if not target_cu_folder:
             logger.error(f"Could not locate any SharePoint folder matching CU ID: {cu_id}")
