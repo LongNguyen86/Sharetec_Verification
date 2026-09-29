@@ -61,13 +61,14 @@ def fetch_input_files(payload: FetchInputRequest):
         ws = RunWorkspace(run_id=requested_run_id)
 
         # 3. DOWNLOAD FILES FROM SHAREPOINT
+        # 3. DOWNLOAD FILES FROM SHAREPOINT (TRUYỀN CU_ID VÀO)
         downloaded = []
         if mapping_p:
-            downloaded.extend(client.fetch_paths([mapping_p], output_dir=ws.mapping_dir))
+            downloaded.extend(client.fetch_paths([mapping_p], output_dir=ws.mapping_dir, cu_id=payload.cu_id))
         if matrix_p:
-            downloaded.extend(client.fetch_paths([matrix_p], output_dir=ws.matrix_dir))
+            downloaded.extend(client.fetch_paths([matrix_p], output_dir=ws.matrix_dir, cu_id=payload.cu_id))
         if raw_p:
-            downloaded.extend(client.fetch_paths([raw_p], output_dir=ws.raw_dir))
+            downloaded.extend(client.fetch_paths([raw_p], output_dir=ws.raw_dir, cu_id=payload.cu_id))
 
         if not downloaded:
             if ws.base_dir.exists():
