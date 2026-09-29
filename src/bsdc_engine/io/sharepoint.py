@@ -153,7 +153,7 @@ class SharePointClient:
                 logger.warning(f"Failed to download [{file_name}] (Status: {response.status})")
                 return None
 
-    def download_folder(self, folder_relative_path: str, output_dir: Path) -> list[Path]:
+    def download_folder(self, folder_relative_path: str, output_dir: Path, cu_id: str | None = None) -> list[Path]:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -197,6 +197,10 @@ class SharePointClient:
 
             files_list = data.get("d", {}).get("results", [])
             downloaded_files = []
+
+            # Clean cu_id for non-case-sensitive matching
+            clean_cu = re.sub(r'[^a-z0-9]', '', cu_id.lower()) if cu_id else None
+
             for file_info in files_list:
                 f_name = file_info.get("Name", "")
                 ext = Path(f_name).suffix.lower()
@@ -204,6 +208,12 @@ class SharePointClient:
                 if f_name.startswith("~$") or ext not in ALLOWED_EXTENSIONS:
                     logger.info(f"Skipping non-data file inside folder: {f_name}")
                     continue
+
+                if clean_cu and "mapping" in f_name.lower():
+                    clean_fname = re.sub(r'[^a-z0-9]', '', f_name.lower())
+                    if clean_cu not in clean_fname:
+                        logger.info(f"Skipping mapping file not matching CU [{cu_id}]: {f_name}")
+                        continue
 
                 unique_id = file_info.get("UniqueId")
                 if unique_id:
@@ -235,7 +245,7 @@ class SharePointClient:
 
             return downloaded_files
 
-    def fetch_paths(self, raw_paths: list[str], output_dir: Path) -> list[Path]:
+    def fetch_paths(self, raw_paths: list[str], output_dir: Path, cu_id: str | None = None) -> list[Path]:
         all_paths = []
         for item in raw_paths:
             split_items = [clean_sharepoint_path(p) for p in item.replace(',', ';').split(';') if p.strip()]
@@ -249,7 +259,7 @@ class SharePointClient:
                 if dl:
                     total_downloaded.append(dl)
             else:
-                dls = self.download_folder(p, output_dir)
+                dls = self.download_folder(p, output_dir, cu_id=cu_id)
                 total_downloaded.extend(dls)
 
         return total_downloaded
