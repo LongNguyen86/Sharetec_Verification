@@ -15,11 +15,21 @@ router = APIRouter(prefix="/api/v1", tags=["Ingestion"])
 
 def _organize_file(file_path: Path, ws: RunWorkspace) -> Path:
     """Route file to correct target directory based on filename keywords."""
+    if file_path.parent.resolve() in (
+        ws.mapping_dir.resolve(),
+        ws.matrix_dir.resolve(),
+        ws.actual_dir.resolve(),
+        ws.raw_dir.resolve(),
+    ):
+        return file_path
+
     name_lower = file_path.name.lower()
     if "mapping" in name_lower:
         target_dir = ws.mapping_dir
     elif "matrix" in name_lower:
         target_dir = ws.matrix_dir
+    elif "actual" in name_lower or "sharetec" in name_lower:
+        target_dir = ws.actual_dir
     else:
         target_dir = ws.raw_dir
 
@@ -38,10 +48,10 @@ def fetch_input_files(payload: FetchInputRequest):
     try:
         client = SharePointClient()
 
-        # 1. VALIDATE CU_ID ON SHAREPOINT BEFORE CREATING WORKSPACE DIRECTORY
         mapping_p = payload.mapping_path
         matrix_p = payload.matrix_path
-        raw_p = getattr(payload, "raw_data_path", None)
+        actual_p = payload.actual_path
+        raw_p = payload.raw_data_path
 
         if not mapping_p or not matrix_p:
             auto_paths = client.resolve_cu_paths(payload.cu_id)
@@ -54,21 +64,22 @@ def fetch_input_files(payload: FetchInputRequest):
 
             mapping_p = mapping_p or auto_paths.get("mapping_path")
             matrix_p = matrix_p or auto_paths.get("matrix_path")
+            actual_p = actual_p or auto_paths.get("actual_path")
             raw_p = raw_p or auto_paths.get("raw_data_path")
 
-        # 2. CREATE WORKSPACE ONLY AFTER CU VALIDATION PASSES
         requested_run_id = payload.run_id if hasattr(payload, "run_id") and payload.run_id else None
         ws = RunWorkspace(run_id=requested_run_id)
 
-        # 3. DOWNLOAD FILES FROM SHAREPOINT
-        # 3. DOWNLOAD FILES FROM SHAREPOINT (TRUYỀN CU_ID VÀO)
+        # DOWNLOAD FILES PARALLEL
         downloaded = []
         if mapping_p:
-            downloaded.extend(client.fetch_paths([mapping_p], output_dir=ws.mapping_dir, cu_id=payload.cu_id))
+            downloaded.extend(client.fetch_paths([mapping_p], output_dir=ws.mapping_dir, cu_id=payload.cu_id, folder_type="mapping"))
         if matrix_p:
-            downloaded.extend(client.fetch_paths([matrix_p], output_dir=ws.matrix_dir, cu_id=payload.cu_id))
+            downloaded.extend(client.fetch_paths([matrix_p], output_dir=ws.matrix_dir, cu_id=payload.cu_id, folder_type="matrix"))
+        if actual_p:
+            downloaded.extend(client.fetch_paths([actual_p], output_dir=ws.actual_dir, cu_id=payload.cu_id, folder_type="actual"))
         if raw_p:
-            downloaded.extend(client.fetch_paths([raw_p], output_dir=ws.raw_dir, cu_id=payload.cu_id))
+            downloaded.extend(client.fetch_paths([raw_p], output_dir=ws.raw_dir, cu_id=payload.cu_id, folder_type="raw"))
 
         if not downloaded:
             if ws.base_dir.exists():
@@ -80,8 +91,7 @@ def fetch_input_files(payload: FetchInputRequest):
 
         final_files = [_organize_file(f, ws) for f in downloaded if f.exists()]
 
-        # 4. FILTER OUT MAPPING FILES THAT DO NOT MATCH THE CURRENT CU_ID
-        # 4. FILTER OUT MAPPING FILES THAT DO NOT MATCH THE CURRENT CU_ID (CASE-INSENSITIVE)
+        # CLEANUP NON-MATCHING MAPPING FILES
         if payload.cu_id and ws.mapping_dir.exists():
             clean_cu = re.sub(r'[^a-z0-9]', '', payload.cu_id.lower())
             for f in list(ws.mapping_dir.glob("*.xlsx")):
@@ -91,7 +101,6 @@ def fetch_input_files(payload: FetchInputRequest):
                         logger.info(f"Removing non-matching mapping file: {f.name} for CU [{payload.cu_id}]")
                         f.unlink(missing_ok=True)
 
-        # Refresh list of valid downloaded files
         final_files = [f for f in final_files if f.exists()]
 
         return {

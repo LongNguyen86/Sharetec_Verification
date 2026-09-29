@@ -20,13 +20,17 @@ class GenerateDataRequest(BaseModel):
 def generate_transformed_data(payload: GenerateDataRequest):
     """
     Trigger the Data Transformation Engine to generate expected CSV tables based on rules in SQLite DB.
+    Reads CSV input files directly from both ws.csv_dir and ws.raw_dir without copying files.
     """
     try:
         ws = RunWorkspace(run_id=payload.run_id)
 
-        # Initialize the transformation builder using the isolated workspace paths
+        # Pass both directories [output/csv, input/raw_data] as a list of data sources
+        raw_data_sources = [ws.csv_dir, ws.raw_dir]
+
+        # Initialize transformation builder with multiple input directory sources
         builder = TransformationBuilder(
-            raw_data_dir=ws.csv_dir,
+            raw_data_dir=raw_data_sources,
             output_dir=getattr(ws, "transformed_dir", ws.reconciliation_dir),
             db_path=getattr(ws, "db_path", None),
         )
@@ -36,7 +40,7 @@ def generate_transformed_data(payload: GenerateDataRequest):
         if not results:
             raise HTTPException(
                 status_code=400, 
-                detail=f"No raw data files found in directory for run_id: {payload.run_id}"
+                detail=f"No raw data files found in directories {[str(d) for d in raw_data_sources]} for run_id: {payload.run_id}"
             )
 
         logger.info(

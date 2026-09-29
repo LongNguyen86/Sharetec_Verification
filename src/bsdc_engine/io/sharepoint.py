@@ -1,7 +1,10 @@
 import os
 import re
+import json
 import urllib.parse
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+import requests
 from playwright.sync_api import sync_playwright
 
 from src.bsdc_engine.config import settings
@@ -47,6 +50,31 @@ class SharePointClient:
         content_head = content_bytes[:500].decode("utf-8", errors="ignore").lower()
         return "doctype" in content_head or "html" in content_head
 
+    def _get_authenticated_requests_session(self) -> requests.Session:
+        """Create a requests session pre-populated with cookies from state.json for fast parallel downloads."""
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json;odata=verbose",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        })
+        if self.session_file.exists():
+            try:
+                with open(self.session_file, "r", encoding="utf-8") as f:
+                    state_data = json.load(f)
+                for c in state_data.get("cookies", []):
+                    session.cookies.set(
+                        c["name"],
+                        c["value"],
+                        domain=c.get("domain", ""),
+                        path=c.get("path", "/")
+                    )
+            except Exception as e:
+                logger.warning(f"Could not load cookies into requests session: {e}")
+        return session
+
     def _ensure_authenticated(self, p=None, force_reauth: bool = False):
         """Check if state.json exists. If missing or force_reauth is True, open browser for login and 2FA."""
         if self.session_file.exists() and not force_reauth:
@@ -60,7 +88,6 @@ class SharePointClient:
             page = context.new_page()
             page.goto(self.site_url)
 
-            # 1. Auto-fill Username/Email if prompt is visible
             try:
                 email_input = page.wait_for_selector('input[type="email"], input[name="loginfmt"]', timeout=8000)
                 if email_input and self.username:
@@ -71,7 +98,6 @@ class SharePointClient:
             except Exception:
                 logger.info("Username prompt skipped or already populated.")
 
-            # 2. Auto-fill Password if prompt is visible
             try:
                 password_input = page.wait_for_selector('input[type="password"], input[name="passwd"]', timeout=8000)
                 if password_input and self.password:
@@ -133,7 +159,6 @@ class SharePointClient:
             request_context = p.request.new_context(storage_state=str(self.session_file))
             response = request_context.get(api_endpoint, headers=headers, timeout=300000)
 
-            # Auto trigger 2FA re-authentication if session expired
             if response.status in (401, 403) or self._is_html_response(response.body()):
                 logger.warning(f"Session expired fetching [{file_name}]. Launching 2FA login automatically...")
                 self._cleanup_expired_session("Expired session detected")
@@ -153,7 +178,13 @@ class SharePointClient:
                 logger.warning(f"Failed to download [{file_name}] (Status: {response.status})")
                 return None
 
-    def download_folder(self, folder_relative_path: str, output_dir: Path, cu_id: str | None = None) -> list[Path]:
+    def download_folder(
+        self,
+        folder_relative_path: str,
+        output_dir: Path,
+        cu_id: str | None = None,
+        folder_type: str = "general"
+    ) -> list[Path]:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -174,7 +205,6 @@ class SharePointClient:
             request_context = p.request.new_context(storage_state=str(self.session_file))
             response = request_context.get(api_endpoint, headers=headers, timeout=300000)
 
-            # Auto trigger 2FA re-authentication if session expired
             if response.status in (401, 403) or self._is_html_response(response.body()):
                 logger.warning(f"Session expired fetching folder [{folder_relative_path}]. Launching 2FA login automatically...")
                 self._cleanup_expired_session("Expired session detected")
@@ -196,9 +226,8 @@ class SharePointClient:
                 return []
 
             files_list = data.get("d", {}).get("results", [])
-            downloaded_files = []
+            candidate_files = []
 
-            # Clean cu_id for non-case-sensitive matching
             clean_cu = re.sub(r'[^a-z0-9]', '', cu_id.lower()) if cu_id else None
 
             for file_info in files_list:
@@ -209,7 +238,17 @@ class SharePointClient:
                     logger.info(f"Skipping non-data file inside folder: {f_name}")
                     continue
 
-                if clean_cu and "mapping" in f_name.lower():
+                # BỘ LỌC NGHIÊM NGẶT CHO MAPPING FOLDER: Chỉ tải đúng file mapping chứa cu_id
+                if folder_type == "mapping":
+                    if "mapping" not in f_name.lower():
+                        logger.info(f"Skipping non-mapping file in QA folder: {f_name}")
+                        continue
+                    if clean_cu:
+                        clean_fname = re.sub(r'[^a-z0-9]', '', f_name.lower())
+                        if clean_cu not in clean_fname:
+                            logger.info(f"Skipping mapping file not matching CU [{cu_id}]: {f_name}")
+                            continue
+                elif clean_cu and "mapping" in f_name.lower():
                     clean_fname = re.sub(r'[^a-z0-9]', '', f_name.lower())
                     if clean_cu not in clean_fname:
                         logger.info(f"Skipping mapping file not matching CU [{cu_id}]: {f_name}")
@@ -224,28 +263,60 @@ class SharePointClient:
                     encoded_file_url = urllib.parse.quote(escaped_file_url, safe='/$()')
                     file_val_url = f"{self.site_url}/_api/web/getfilebyserverrelativeurl('{encoded_file_url}')/$value"
 
-                file_resp = request_context.get(
-                    file_val_url,
-                    headers={
-                        "Cache-Control": "no-cache, no-store, must-revalidate",
-                        "Pragma": "no-cache",
-                        "Expires": "0",
-                    },
-                    timeout=300000,
-                )
+                candidate_files.append((f_name, file_val_url))
+
+            if not candidate_files:
+                return []
+
+            # TẢI SONG SONG QUA THƯ VIỆN REQUESTS (GẤP 3-5 LẦN TỐC ĐỘ)
+            req_session = self._get_authenticated_requests_session()
+
+            def _dl_file(item: tuple[str, str]) -> tuple[str, str, Path | None]:
+                fname, furl = item
+                try:
+                    res = req_session.get(furl, timeout=300)
+                    if res.status_code == 200 and not self._is_html_response(res.content):
+                        dest_path = output_dir / fname
+                        dest_path.write_bytes(res.content)
+                        logger.info(f"Successfully downloaded file: {fname}")
+                        return (fname, furl, dest_path)
+                    return (fname, furl, None)
+                except Exception as ex:
+                    logger.warning(f"Parallel download failed for [{fname}]: {ex}")
+                    return (fname, furl, None)
+
+            downloaded_paths = []
+            failed_items = []
+
+            with ThreadPoolExecutor(max_workers=min(len(candidate_files), 5)) as executor:
+                results = list(executor.map(_dl_file, candidate_files))
+
+            for fname, furl, dpath in results:
+                if dpath:
+                    downloaded_paths.append(dpath)
+                else:
+                    failed_items.append((fname, furl))
+
+            # FALLBACK NẾU CÓ FILE TẢI LỖI
+            for fname, furl in failed_items:
+                file_resp = request_context.get(furl, timeout=300000)
                 if file_resp.status == 200:
                     f_bytes = file_resp.body()
                     if not self._is_html_response(f_bytes):
-                        dest_path = output_dir / f_name
+                        dest_path = output_dir / fname
                         dest_path.write_bytes(f_bytes)
-                        downloaded_files.append(dest_path)
-                        logger.info(f"Successfully downloaded file: {f_name}")
-                else:
-                    logger.warning(f"Failed to download [{f_name}] (Status: {file_resp.status})")
+                        downloaded_paths.append(dest_path)
+                        logger.info(f"Successfully downloaded file via fallback: {fname}")
 
-            return downloaded_files
+            return downloaded_paths
 
-    def fetch_paths(self, raw_paths: list[str], output_dir: Path, cu_id: str | None = None) -> list[Path]:
+    def fetch_paths(
+        self,
+        raw_paths: list[str],
+        output_dir: Path,
+        cu_id: str | None = None,
+        folder_type: str = "general"
+    ) -> list[Path]:
         all_paths = []
         for item in raw_paths:
             split_items = [clean_sharepoint_path(p) for p in item.replace(',', ';').split(';') if p.strip()]
@@ -259,13 +330,12 @@ class SharePointClient:
                 if dl:
                     total_downloaded.append(dl)
             else:
-                dls = self.download_folder(p, output_dir, cu_id=cu_id)
+                dls = self.download_folder(p, output_dir, cu_id=cu_id, folder_type=folder_type)
                 total_downloaded.extend(dls)
 
         return total_downloaded
 
     def upload_file(self, local_file_path: Path, target_folder_path: str) -> bool:
-        """Upload a local file to a specified SharePoint folder path using FormDigest validation."""
         local_file_path = Path(local_file_path)
         if not local_file_path.exists():
             logger.error(f"Local file to upload does not exist: {local_file_path}")
@@ -296,7 +366,6 @@ class SharePointClient:
                 timeout=30000,
             )
 
-            # Auto trigger 2FA re-authentication if session expired
             if digest_resp.status in (401, 403) or self._is_html_response(digest_resp.body()):
                 logger.warning(f"Session expired fetching FormDigest. Launching 2FA login automatically...")
                 self._cleanup_expired_session("Expired session detected")
@@ -347,7 +416,6 @@ class SharePointClient:
         cu_id: str,
         base_parent_dir: str | None = None
     ) -> dict[str, str]:
-        """Dynamically search SharePoint parent directory for a matching CU folder name using global settings."""
         cu_clean = cu_id.strip().upper()
         cu_token = cu_clean.split()[0] if cu_clean else ""
 
@@ -364,7 +432,6 @@ class SharePointClient:
             request_context = p.request.new_context(storage_state=str(self.session_file))
             response = request_context.get(api_endpoint, headers={"Accept": "application/json;odata=verbose"})
 
-            # Auto trigger 2FA re-authentication if session expired
             if response.status in (401, 403) or self._is_html_response(response.body()):
                 logger.warning("Session expired in resolve_cu_paths. Launching 2FA login automatically...")
                 self._cleanup_expired_session("Expired session detected")
@@ -392,7 +459,11 @@ class SharePointClient:
 
         logger.info(f"Normalized CU [{cu_id}] path -> {rel_cu_folder}")
 
+        qa_folder = f"{rel_cu_folder}/{settings.SHAREPOINT_QA_FOLDER_REL}"
+
         return {
-            "mapping_path": f"{rel_cu_folder}/{settings.SHAREPOINT_QA_FOLDER_REL}",
+            "mapping_path": qa_folder,
             "matrix_path": f"{rel_cu_folder}/{settings.SHAREPOINT_MATRIX_FOLDER_REL}",
+            "actual_path": f"{qa_folder}/Actual Sharetec",
+            "raw_data_path": f"{qa_folder}/Raw Data",
         }
