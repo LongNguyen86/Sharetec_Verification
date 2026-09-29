@@ -1,4 +1,5 @@
 import urllib.parse
+import re
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -43,6 +44,18 @@ class ApplyQARequest(BaseModel):
 def parse_rules(payload: ParseRulesRequest):
     try:
         ws = RunWorkspace(run_id=payload.run_id)
+
+        # Ensure mapping directory contains ONLY the target CU mapping file
+        # Ensure mapping directory contains ONLY the target CU mapping file (Case-Insensitive)
+        if payload.cu_id and ws.mapping_dir.exists():
+            clean_cu = re.sub(r'[^a-z0-9]', '', payload.cu_id.lower())
+            for f in list(ws.mapping_dir.glob("*.xlsx")):
+                if "mapping" in f.name.lower():
+                    clean_fname = re.sub(r'[^a-z0-9]', '', f.name.lower())
+                    if clean_cu not in clean_fname:
+                        logger.info(f"Removing non-matching mapping file before parsing: {f.name}")
+                        f.unlink(missing_ok=True)
+
         parse_all_mapping_sheets(raw_dir=ws.mapping_dir, cu_id=payload.cu_id)
         return {
             "status": "success",

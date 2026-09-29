@@ -1,4 +1,5 @@
 import shutil
+import re
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
@@ -45,7 +46,6 @@ def fetch_input_files(payload: FetchInputRequest):
         if not mapping_p or not matrix_p:
             auto_paths = client.resolve_cu_paths(payload.cu_id)
             
-            # Check if CU name exists on SharePoint
             if not auto_paths or not any(auto_paths.values()):
                 raise HTTPException(
                     status_code=400,
@@ -69,7 +69,6 @@ def fetch_input_files(payload: FetchInputRequest):
         if raw_p:
             downloaded.extend(client.fetch_paths([raw_p], output_dir=ws.raw_dir))
 
-        # 4. IF NO FILES DOWNLOADED, CLEAN UP CREATED WORKSPACE DIRECTORY AND RETURN ERROR
         if not downloaded:
             if ws.base_dir.exists():
                 shutil.rmtree(ws.base_dir, ignore_errors=True)
@@ -79,6 +78,20 @@ def fetch_input_files(payload: FetchInputRequest):
             )
 
         final_files = [_organize_file(f, ws) for f in downloaded if f.exists()]
+
+        # 4. FILTER OUT MAPPING FILES THAT DO NOT MATCH THE CURRENT CU_ID
+        # 4. FILTER OUT MAPPING FILES THAT DO NOT MATCH THE CURRENT CU_ID (CASE-INSENSITIVE)
+        if payload.cu_id and ws.mapping_dir.exists():
+            clean_cu = re.sub(r'[^a-z0-9]', '', payload.cu_id.lower())
+            for f in list(ws.mapping_dir.glob("*.xlsx")):
+                if "mapping" in f.name.lower():
+                    clean_fname = re.sub(r'[^a-z0-9]', '', f.name.lower())
+                    if clean_cu not in clean_fname:
+                        logger.info(f"Removing non-matching mapping file: {f.name} for CU [{payload.cu_id}]")
+                        f.unlink(missing_ok=True)
+
+        # Refresh list of valid downloaded files
+        final_files = [f for f in final_files if f.exists()]
 
         return {
             "status": "success",
