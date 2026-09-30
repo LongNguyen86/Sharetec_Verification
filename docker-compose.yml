@@ -10,6 +10,7 @@ services:
       - NODES_EXCLUDE=[]
       - N8N_SECURE_COOKIE=false
       - WEBHOOK_URL=http://161.118.198.37:5678/
+      - N8N_ENCRYPTION_KEY=bsdc_ingest_fixed_secret_key_2026
     volumes:
       # Mount current directory to container app directory for live updates
       - .:/home/node/app

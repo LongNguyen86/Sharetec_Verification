@@ -16,8 +16,8 @@
       "parameters": {
         "fromEmail": "dragon9968@gmail.com",
         "toEmail": "dinhlong.nguyen@evizi.com",
-        "subject": "=🚨 [N8N ALERT] Workflow Failed: {{ $json.workflow.name }}",
-        "html": "=<h3>🚨 N8N SYSTEM ERROR REPORT</h3>\n\n<p><b>Workflow Name:</b> {{ $json.workflow.name }}</p>\n<p><b>Failed Node:</b> {{ $json.execution.error.node.name }}</p>\n<p><b>Error Message:</b> {{ $json.execution.error.message }}</p>\n<p><b>Execution ID:</b> {{ $json.execution.id }}</p>\n\n<hr>\n<h4>📋 Full Error Log Details:</h4>\n<pre style=\"background: #282c34; color: #abb2bf; padding: 15px; border-radius: 6px; font-family: monospace; white-space: pre-wrap; word-break: break-all;\">\n{{ JSON.stringify($json.execution.error, null, 2) }}\n</pre>",
+        "subject": "=🚨 [ALERT] Workflow Failed: {{ $json.workflow.name }}",
+        "html": "=<h3>🚨 SHARETEC SYSTEM ERROR REPORT</h3>\n\n<p><b>Workflow Name:</b> {{ $json.workflow.name }}</p>\n<p><b>Failed Node:</b> {{ $json.execution.error.node.name }}</p>\n<p><b>Error Message:</b> {{ $json.execution.error.message }}</p>\n<p><b>Execution ID:</b> {{ $json.execution.id }}</p>\n\n<hr>\n<h4>📋 Full Error Log Details:</h4>\n<pre style=\"background: #282c34; color: #abb2bf; padding: 15px; border-radius: 6px; font-family: monospace; white-space: pre-wrap; word-break: break-all;\">\n{{ JSON.stringify($json.execution.error, null, 2) }}\n</pre>",
         "options": {}
       },
       "type": "n8n-nodes-base.emailSend",
@@ -51,11 +51,11 @@
       ]
     }
   },
-  "active": true,
+  "active": false,
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "59d61411-6a78-4eb2-9cb3-0de36013a00f",
+  "versionId": "a54e7938-7b95-4e71-b12c-b0af987247c5",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "7e4ab5b15df44e4fdbde799614bf980ec37978041426198882a1d59e9c97067d"
