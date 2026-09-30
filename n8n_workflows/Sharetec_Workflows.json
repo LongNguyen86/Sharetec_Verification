@@ -1,5 +1,5 @@
 {
-  "name": "BSDC_Workflows",
+  "name": "Sharetec_Workflows",
   "nodes": [
     {
       "parameters": {
@@ -184,7 +184,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1240,
+        420,
         340
       ],
       "id": "5c53d50d-9160-43e0-911f-f16ca40d1221",
@@ -198,7 +198,7 @@
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        700,
+        960,
         340
       ],
       "id": "9b2b3a07-ab48-432c-9be2-5e831f1f26ef",
@@ -211,7 +211,7 @@
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
       "position": [
-        420,
+        700,
         340
       ],
       "id": "02cf2f94-39e2-4148-883a-b319d927d6d1",
@@ -288,8 +288,8 @@
       "parameters": {
         "fromEmail": "dragon9968@gmail.com",
         "toEmail": "dinhlong.nguyen@evizi.com",
-        "subject": "=BSDC Ingest] Need to review Rule Verification Report - {{ $('Set Sharepoint Path').item.json.cu_id }}",
-        "html": "=<div style=\"font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px;\">\n  <h2 style=\"color: #0056b3; margin-top: 0;\">📢 Rule Verification Report - Action Required</h2>\n  <p>The <b>Rule Verification Report</b> for Credit Union <b>{{ $('Set Sharepoint Path').item.json.cu_id }}</b> has been successfully generated and uploaded to SharePoint.</p>\n  \n  <div style=\"background-color: #f8f9fa; padding: 15px; border-left: 4px solid #0056b3; margin: 20px 0;\">\n    <p style=\"margin: 0 0 10px 0;\"><b>Step 1:</b> Open the Excel report on SharePoint and update the <i>Approved / Rejected</i> status for the pending rules.</p>\n    <p style=\"margin: 0;\"><b>Step 2:</b> Once reviewed, click the button below to proceed with saving the updated decisions into the database.</p>\n  </div>\n  \n  <p style=\"text-align: center; margin: 30px 0;\">\n    <a href=\"{{ $execution.resumeUrl }}\" \n       style=\"background-color: #28a745; color: white; padding: 14px 24px; text-decoration: none; font-weight: bold; border-radius: 5px; display: inline-block; font-size: 15px;\">\n       ✅ Confirm QA Completion\n    </a>\n  </p>\n  \n  <hr style=\"border: 0; border-top: 1px solid #eee; margin-top: 30px;\" />\n  <p style=\"color: #888; font-size: 12px; text-align: center; margin: 0;\">This is an automated message sent from the BSDC Data Ingest System.</p>\n</div>",
+        "subject": "=[Sharetec] Need to review Rule Verification Report - {{ $('Set Sharepoint Path').item.json.cu_id }}",
+        "html": "=<div style=\"font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px;\">\n  <h2 style=\"color: #0056b3; margin-top: 0;\">📢 Rule Verification Report - Action Required</h2>\n  <p>The <b>Rule Verification Report</b> for Credit Union <b>{{ $('Set Sharepoint Path').item.json.cu_id }}</b> has been successfully generated and uploaded to SharePoint.</p>\n  \n  <div style=\"background-color: #f8f9fa; padding: 15px; border-left: 4px solid #0056b3; margin: 20px 0;\">\n    <p style=\"margin: 0 0 10px 0;\"><b>Step 1:</b> Open the Excel report on SharePoint and update the <i>Approved / Rejected</i> status for the pending rules.</p>\n    <p style=\"margin: 0;\"><b>Step 2:</b> Once reviewed, click the button below to proceed with saving the updated decisions into the database.</p>\n  </div>\n  \n  <p style=\"text-align: center; margin: 30px 0;\">\n    <a href=\"{{ $execution.resumeUrl }}\" \n       style=\"background-color: #28a745; color: white; padding: 14px 24px; text-decoration: none; font-weight: bold; border-radius: 5px; display: inline-block; font-size: 15px;\">\n       ✅ Confirm QA Completion\n    </a>\n  </p>\n  \n  <hr style=\"border: 0; border-top: 1px solid #eee; margin-top: 30px;\" />\n  <p style=\"color: #888; font-size: 12px; text-align: center; margin: 0;\">This is an automated message sent from the Sharetec System.</p>\n</div>",
         "options": {}
       },
       "type": "n8n-nodes-base.emailSend",
@@ -337,8 +337,8 @@
       "parameters": {
         "fromEmail": "dragon9968@gmail.com",
         "toEmail": "dinhlong.nguyen@evizi.com",
-        "subject": "=BSDC Ingest - Full Execution Results - {{ $('Set Sharepoint Path').item.json.cu_id }}",
-        "html": "<p>Hello,</p>\n<p>The BSDC Ingest system has completed the entire processing workflow.</p>\n<p>The attached zip file contains the complete report data from the <b>runs</b> and <b>test-output</b> directories on the VPS.</p>",
+        "subject": "=[Sharetec] - Full Execution Results - {{ $('Set Sharepoint Path').item.json.cu_id }}",
+        "html": "<p>Hello,</p>\n<p>The Sharetec system has completed the entire processing workflow.</p>\n<p>The attached zip file contains the complete report data from the <b>runs</b> and <b>test-output</b> directories on the VPS.</p>",
         "options": {
           "attachments": "data"
         }
@@ -346,7 +346,7 @@
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "position": [
-        960,
+        1260,
         340
       ],
       "id": "8575a089-a8c8-4f0a-bd63-54442d6001b9",
@@ -456,7 +456,7 @@
       "main": [
         [
           {
-            "node": "Zip Files Result",
+            "node": "Record the Verification",
             "type": "main",
             "index": 0
           }
@@ -531,18 +531,18 @@
     },
     "Send the Result to Email": {
       "main": [
-        [
-          {
-            "node": "Record the Verification",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "Record the Verification": {
       "main": [
-        []
+        [
+          {
+            "node": "Zip Files Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },
@@ -552,7 +552,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "a4abzHrvMqCNYY9k"
   },
-  "versionId": "eb1ef381-2149-4dbb-a7ff-a2ed8499a1ad",
+  "versionId": "b77a0102-716a-4344-9c59-47f23e09ad6d",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "7e4ab5b15df44e4fdbde799614bf980ec37978041426198882a1d59e9c97067d"
