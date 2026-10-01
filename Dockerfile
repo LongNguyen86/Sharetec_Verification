@@ -31,4 +31,4 @@ EXPOSE 5678 8000
 
 ENV DISPLAY=:99
 
-CMD ["sh", "-c", "Xvfb :99 -ac -screen 0 1024x768x24 & sleep 1 && python3 -m uvicorn src.bsdc_engine.api.app:app --host 0.0.0.0 --port 8000 & n8n import:workflow --separate --input=/home/node/app/n8n_workflows/ && n8n start"]
+CMD ["sh", "-c", "Xvfb :99 -ac -screen 0 1024x768x24 & sleep 1 && python3 -m uvicorn src.bsdc_engine.api.app:app --host 0.0.0.0 --port 8000 & if [ ! -f /home/node/.n8n/.imported ]; then n8n import:workflow --separate --input=/home/node/app/n8n_workflows/ && touch /home/node/.n8n/.imported; fi && n8n start"]
