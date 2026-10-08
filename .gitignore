@@ -2,6 +2,7 @@
 venv/
 .venv/
 __pycache__/
+raw_data/*
 *.pyc
 *.pyo
 *.pyd
