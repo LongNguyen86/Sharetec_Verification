@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 import polars as pl
 from pydantic import BaseModel
-
+import shutil
 from src.bsdc_engine.logging import get_logger
 from src.bsdc_engine.verify.key_matcher import KeyMatcher, detect_key_columns
 from src.bsdc_engine.verify.comparator import DataComparator
@@ -75,7 +75,9 @@ def assemble_worksheet_endpoint(payload: WorksheetRequest):
             act_dir=act_dir,
             sp_template_relative_path=payload.sharepoint_template_path
         )
-
+        dest_path = ws.test_output_dir / Path(worksheet_html_path).name
+        shutil.move(str(worksheet_html_path), str(dest_path))
+        worksheet_html_path = dest_path
         return {
             "status": "success",
             "run_id": payload.run_id,
