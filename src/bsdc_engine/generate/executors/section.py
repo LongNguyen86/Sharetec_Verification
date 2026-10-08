@@ -6,12 +6,16 @@ from src.bsdc_engine.generate.resolver import resolve_column_name
 def parse_section_filter_expr(
     filter_str: str, default_table: str, available_cols: list
 ) -> pl.Expr | None:
+    """
+    Parse section filter expressions into Polars expressions dynamically.
+    Supports OR conditions, prefix matching, inequality checks, and exclusion rules.
+    """
     if not filter_str:
         return None
 
     filter_upper = filter_str.upper().strip()
 
-    # Regex supporting both "COLUMN B = 12 OR 1202" and "COLUMN B = 12 OR COLUMN B = 1202"
+    # Match dynamic OR conditions for column value filters
     m_or = re.search(
         r"COLUMN\s+([A-Z]+)\s*=\s*([0-9A-Z_\-\.]+)\s+OR\s+(?:COLUMN\s+[A-Z]+\s*=\s*)?([0-9A-Z_\-\.]+)",
         filter_upper,
@@ -29,6 +33,7 @@ def parse_section_filter_expr(
                 | col_expr.str.starts_with(val2)
             )
 
+    # Match prefix filter conditions (e.g. STARTS WITH / BEGINS WITH)
     m_beg = re.search(
         r"COLUMN\s+([A-Z]+)\s+(?:BEGINS|STARTS\s+WITH|BEGINS\s+WITH)\s+([A-Z0-9_\-\s]+)",
         filter_upper,
@@ -40,6 +45,7 @@ def parse_section_filter_expr(
             col_expr = pl.col(c_name).cast(pl.Utf8).fill_null("").str.strip_chars().str.to_uppercase()
             return col_expr.str.starts_with(val.upper())
 
+    # Match inequality filter conditions
     m_neq = re.search(r"COLUMN\s+([A-Z]+)\s*(?:<>|!=)\s*([^\|\n]+)", filter_upper)
     if m_neq:
         col_let = m_neq.group(1)
@@ -53,6 +59,7 @@ def parse_section_filter_expr(
                 return (col_expr != "0") & (col_expr != "") & (col_expr != "NULL") & (col_expr != "NONE")
             return col_expr != val_raw
 
+    # Match exclusion instructions (e.g. DO NOT CREATE / DO NOT ASSIGN)
     if "DO NOT CREATE" in filter_upper or "DO NOT ASSIGN" in filter_upper:
         m_eq = re.search(r"COLUMN\s+([A-Z]+)\s*(?:=|\bIS\b)\s*([0-9A-Z_\-\.\s]+)", filter_upper)
         if m_eq:
@@ -65,6 +72,7 @@ def parse_section_filter_expr(
                     return (col_expr != "") & (col_expr != "NULL") & (col_expr != "NONE")
                 return col_expr != val_clean
 
+    # Match basic column equality filter
     m_eq = re.search(r"COLUMN\s+([A-Za-z0-9_]+)\s*(?:=|\bIS\b)\s*([0-9A-Z_\-\.]+)", filter_upper)
     if m_eq:
         col_let, val = m_eq.group(1), m_eq.group(2).strip()

@@ -139,8 +139,11 @@ def main():
         out_dir = getattr(ws, "transformed_dir", ws.reconciliation_dir)
         db_file = getattr(ws, "db_path", None) or settings.db_path
 
+        # Pass both CSV dir and RAW dir so TransformationBuilder scans both automatically
+        raw_input_dirs = [ws.csv_dir, ws.raw_dir]
+
         builder = TransformationBuilder(
-            raw_data_dir=ws.csv_dir,
+            raw_data_dir=raw_input_dirs,
             output_dir=out_dir,
             db_path=db_file
         )
