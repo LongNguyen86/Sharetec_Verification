@@ -41,15 +41,6 @@ def run_perform_verification(payload: VerificationRequest):
         exp_dir = getattr(ws, "reconciliation_dir", None) or (run_root / "out" / "reconciliation")
         
         # =========================================================================
-        # ### LEGACY CODE (LOCAL COMPARISON) - PRESERVED AS REQUESTED
-        # =========================================================================
-        ### act_dir = Path("workspace/Actual_Sharetec")
-        ### # use actual Sharetec data directory on SP
-        ### # act_dir = ws.raw_dir.parent / "Actual_Sharetec"
-        ### act_dir.mkdir(parents=True, exist_ok=True)
-        # =========================================================================
-
-        # =========================================================================
         # NEW LOGIC: DYNAMICALLY FETCH DATA FROM SHAREPOINT BASED ON CU_ID
         # =========================================================================
         act_dir = getattr(ws, "actual_dir", None) or (ws.raw_dir.parent / "actual_sharetec")

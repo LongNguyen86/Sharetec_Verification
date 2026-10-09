@@ -15,6 +15,9 @@ from src.bsdc_engine.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Preferred Credit Union key column indices for auto-join fallback (0=Col A Member Num, 6=Col G, 16=Col Q)
+PREFERRED_JOIN_INDICES = ["0", "6", "16", "1"]
+
 
 class TransformationBuilder:
     def __init__(
@@ -105,7 +108,7 @@ class TransformationBuilder:
 
                     # STEP A: APPLY SECTION FILTER PRIOR TO JOINING
                     cursor.execute(
-                        "SELECT dsl_json, raw_notes FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND target_field = '_SECTION_RULE_' LIMIT 1",
+                        "SELECT dsl_json, raw_notes FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND target_field LIKE '_SECTION_RULE_%' LIMIT 1",
                         (cu_id, current_sheet, sec),
                     )
                     sec_rule_row = cursor.fetchone()
@@ -170,14 +173,23 @@ class TransformationBuilder:
                                     left_key = f"{default_table_key}::col_{tgt_idx}"
                                     right_key = f"{sec_file}::col_{src_idx}"
 
+                            # Prioritized Fallback: Match on Member Number (Col A = "0") if no explicit LINK rule exists
                             if not left_key or not right_key:
                                 primary_col_indices = [c.split("::col_")[-1] for c in base_df.columns if "::col_" in c]
                                 sec_col_indices = [c.split("::col_")[-1] for c in sec_df.columns if "::col_" in c]
-                                common_indices = [idx for idx in ["6", "16", "0", "1"] if idx in primary_col_indices and idx in sec_col_indices]
-                                for idx in common_indices:
-                                    left_key = f"{default_table_key}::col_{idx}"
-                                    right_key = f"{sec_file}::col_{idx}"
-                                    break
+                                
+                                common_indices = [
+                                    idx for idx in PREFERRED_JOIN_INDICES 
+                                    if idx in primary_col_indices and idx in sec_col_indices
+                                ]
+                                if not common_indices:
+                                    common_indices = [idx for idx in primary_col_indices if idx in sec_col_indices]
+
+                                if common_indices:
+                                    selected_idx = common_indices[0]
+                                    left_key = f"{default_table_key}::col_{selected_idx}"
+                                    right_key = f"{sec_file}::col_{selected_idx}"
+                                    logger.info(f"Auto-matched join key col_{selected_idx} between [{default_table_key}] and [{sec_file}]")
 
                             if left_key and right_key and left_key in base_df.columns and right_key in sec_df.columns:
                                 try:
@@ -211,7 +223,7 @@ class TransformationBuilder:
                     # STEP C: PROCESS FIELD MAPPINGS AND TRANSFORMATIONS
                     output_data = {}
                     cursor.execute(
-                        "SELECT target_field, data_file, column_letter, rule_type, dsl_json, raw_notes FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND target_field != '_SECTION_RULE_' ORDER BY id ASC",
+                        "SELECT target_field, data_file, column_letter, rule_type, dsl_json, raw_notes FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND target_field NOT LIKE '_SECTION_RULE_%' ORDER BY id ASC",
                         (cu_id, current_sheet, sec),
                     )
                     field_rules = cursor.fetchall()
