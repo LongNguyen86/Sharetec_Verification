@@ -10,6 +10,7 @@ from src.bsdc_engine.rules.dsl import (
     JoinRuleModel,
     ConditionalRuleDSL,
     BranchModel,
+    ConcatRuleDSL,
     DirectRuleDSL,
     ConstantRuleDSL,
     MatrixLookupRuleDSL,
@@ -217,6 +218,18 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
             "status": "AUTO_PARSED",
         }
 
+    if ("+" in notes or " AND " in notes_upper) and not ("IF " in notes_upper or notes_upper.startswith("IF")):
+        raw_cols = re.findall(r"\b([A-Za-z]{1,3})\b", notes)
+        valid_cols = [c.upper() for c in raw_cols if c.upper() not in ["COLUMN", "COL", "AND", "ASSIGN", "CREATE", "PLUS"]]
+        if len(valid_cols) >= 2:
+            concat_dsl = ConcatRuleDSL(cols=valid_cols, delimiter=" ")
+            return {
+                "rule_type": "CONCAT",
+                "dsl_obj": concat_dsl,
+                "dsl_readable": f"CONCAT({', '.join(valid_cols)})",
+                "status": "AUTO_PARSED",
+            }
+
     if "IF " in notes_upper or "IF\n" in notes_upper or notes_upper.startswith("IF"):
         branches = parse_chained_ifs(notes, default_col=col)
         if branches:
@@ -247,7 +260,7 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
             }
 
     if any(k in notes_upper for k in ["MATRIX", "LOOKUP"]):
-        match = re.search(r"ASSIGN\s+([A-Za-z0-9_\\-\\.]+)", notes, re.IGNORECASE)
+        match = re.search(r"ASSIGN\s+([A-Za-z0-9_\-\.]+)", notes, re.IGNORECASE)
         ref = match.group(1) if match else "MATRIX_LOOKUP"
 
         matrix_dsl = MatrixLookupRuleDSL(
@@ -263,11 +276,11 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
             "status": "AUTO_PARSED",
         }
 
-    if notes_upper.startswith("ASSIGN"):
+    if notes_upper.startswith("ASSIGN") or notes_upper.startswith("CREATE"):
         val = clean_action_val(notes)
         is_field_ref = bool(
             re.match(
-                r"^(MB|DP|LN|DP-TYPE|LN-TYPE|CU|CHECK_ACCOUNT_HOLDS|SAVINGS_ACCOUNTS)\.[A-Za-z0-9_\\-]+",
+                r"^(MB|DP|LN|DP-TYPE|LN-TYPE|CU|CHECK_ACCOUNT_HOLDS|SAVINGS_ACCOUNTS)\.[A-Za-z0-9_\-]+",
                 val,
                 re.IGNORECASE,
             )

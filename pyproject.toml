@@ -1,5 +1,5 @@
 [project]
-name = "bsdc-engine"
+name = "sharetec-verification"
 version = "1.0.0"
 description = "Enterprise Data Ingestion, Rule Mapping, and Conversion Engine for BSDC"
 readme = "README.md"
@@ -15,7 +15,8 @@ dependencies = [
     "playwright>=1.42.0",
     "google-genai>=0.1.0",
     "python-dotenv>=1.0.1",
-    "beautifulsoup4"
+    "beautifulsoup4",
+    "requests>=2.31.0"
 ]
 
 [project.optional-dependencies]
@@ -39,3 +40,6 @@ python_files = ["test_*.py"]
 
 [project.scripts]
 bsdc-cli = "src.bsdc_engine.cli:main"
+
+[tool.deptry]
+known_first_party = ["src"]
