@@ -120,7 +120,11 @@ class MappingValidator:
 
                     # Preflight checks
                     err1 = check_missing_data_file(
-                        row_idx, field_val, column_val, effective_data_file
+                        row_idx,
+                        field_val,
+                        column_val,
+                        effective_data_file,
+                        has_notes,
                     )
                     if err1:
                         sheet_errors.append(err1)
