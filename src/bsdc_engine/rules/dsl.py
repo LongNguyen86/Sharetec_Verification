@@ -32,6 +32,11 @@ class ConditionalRuleDSL(BaseModel):
     raw_condition: str = ""
 
 
+class ConcatRuleDSL(BaseModel):
+    cols: List[str] = []
+    delimiter: str = " "
+
+
 class DirectRuleDSL(BaseModel):
     source_file: str = ""
     source_column: str = ""

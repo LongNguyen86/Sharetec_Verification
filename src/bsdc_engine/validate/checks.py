@@ -2,10 +2,14 @@
 
 
 def check_missing_data_file(
-    row_idx: int, field_val: str, column_val: str, effective_data_file: str
+    row_idx: int,
+    field_val: str,
+    column_val: str,
+    effective_data_file: str,
+    has_notes: bool = False,
 ) -> str | None:
-    """Rule 1: Column declared but missing Data File on this or above rows."""
-    if column_val and not effective_data_file:
+    """Rule 1: Column declared but missing Data File on this or above rows (unless Notes are provided)."""
+    if column_val and not effective_data_file and not has_notes:
         return (
             f"Row {row_idx:04d} | Field '{field_val}': Has Column='{column_val}' "
             "but Data File not declared on this or above rows!"

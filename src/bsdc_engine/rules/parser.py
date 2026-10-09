@@ -10,6 +10,7 @@ from src.bsdc_engine.rules.dsl import (
     JoinRuleModel,
     ConditionalRuleDSL,
     BranchModel,
+    ConcatRuleDSL,
     DirectRuleDSL,
     ConstantRuleDSL,
     MatrixLookupRuleDSL,
@@ -17,6 +18,19 @@ from src.bsdc_engine.rules.dsl import (
     UnparsedRuleDSL,
 )
 from src.bsdc_engine.rules.store import RuleStore
+
+# List of English words to prevent false-positive column letter matching (e.g. TO, USE, AND, FOR)
+ENGLISH_STOP_WORDS = {
+    "A", "AN", "THE", "TO", "IN", "ON", "AT", "BY", "FOR", "WITH", "ABOUT",
+    "AGAINST", "BETWEEN", "INTO", "THROUGH", "DURING", "BEFORE", "AFTER",
+    "ABOVE", "BELOW", "FROM", "UP", "DOWN", "OF", "OFF", "OVER", "UNDER",
+    "AGAIN", "FURTHER", "THEN", "ONCE", "HERE", "THERE", "WHEN", "WHERE",
+    "WHY", "HOW", "ALL", "ANY", "BOTH", "EACH", "FEW", "MORE", "MOST",
+    "OTHER", "SOME", "SUCH", "NO", "NOR", "NOT", "ONLY", "OWN", "SAME",
+    "SO", "THAN", "TOO", "VERY", "S", "T", "CAN", "WILL", "JUST", "DON",
+    "SHOULD", "NOW", "AND", "OR", "IF", "IS", "IT", "AS", "USE", "SET",
+    "COL", "COLUMN", "ASSIGN", "CREATE", "LINK", "JOIN", "MATRIX", "LOOKUP"
+}
 
 
 def clean_excel_text(text) -> str:
@@ -70,6 +84,37 @@ def clean_action_val(val_str: str) -> str:
         s = s[1:-1].strip()
     s = s.rstrip(";,.").strip()
     return s
+
+
+def is_simple_constant(val_str: str) -> bool:
+    """Check if assigned value is a clean, simple constant literal (e.g., 'ACTIVE', 'RETAIN', '6/30/2026', '00', 'YES')."""
+    if not val_str:
+        return True
+    val_upper = val_str.upper()
+
+    # Narrative English keywords indicating complex logic that must be handed over to LLM
+    complex_keywords = [
+        "COLUMN", "COL", "ELEMENT", "DECIMAL", "MONTH", "DAY", "YEAR",
+        "LINK", "JOIN", "MATURITY", "AFTER", "BEFORE", "FIRST", "SECOND",
+        "THIRD", "FOURTH", "FIFTH", "LAST", "MATRIX", "LOOKUP", "WHERE",
+        "IF", "THEN", "ELSE", "EQUALS", "CONTAIN", "SUBSTRING", "EXTRACT",
+        "INCREMENT", "INCREMENTS", "SEQUENCE", "STEP", "EACH", "EVERY",
+        "PER", "FOR", "START", "STARTING", "COUNT", "COUNTER", "BY",
+        "ACCORDING", "BASED", "RANGE", "RULE"
+    ]
+    
+    for kw in complex_keywords:
+        if re.search(r"\b" + re.escape(kw) + r"\b", val_upper):
+            return False
+
+    # Ignore text containing explanatory notes in parentheses like "(BLANK)" or "(COUPONS)"
+    if "(" in val_str or ")" in val_str:
+        return False
+
+    if len(val_str) > 35 or "=" in val_str:
+        return False
+
+    return True
 
 
 def clean_cond_val(cond_str: str, default_col: str) -> tuple[str, str]:
@@ -208,6 +253,7 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
     notes_upper = notes.upper().strip()
     col_upper = col.upper().strip()
 
+    # 1. NO_MAPPING: Empty column letter and empty notes
     if not col_upper and not notes_upper:
         no_map = NoMappingRuleDSL()
         return {
@@ -217,57 +263,84 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
             "status": "AUTO_PARSED",
         }
 
-    if "IF " in notes_upper or "IF\n" in notes_upper or notes_upper.startswith("IF"):
-        branches = parse_chained_ifs(notes, default_col=col)
-        if branches:
-            branch_models = [BranchModel(**b) for b in branches]
-            cond_dsl = ConditionalRuleDSL(
-                if_col=branch_models[0].if_col,
-                if_val=branch_models[0].if_val,
-                then_val=branch_models[0].then_val,
-                else_val=branch_models[0].else_val,
-                branches=branch_models,
-                raw_condition=notes,
-            )
-
-            b_count = len(branch_models)
-            if b_count == 1:
-                b = branch_models[0]
-                readable = f"IF COL_{b.if_col} == '{b.if_val}' THEN '{b.then_val}'"
-                if b.else_val:
-                    readable += f" ELSE '{b.else_val}'"
+    # 2. Strict CONCAT: Only trigger on explicit '+' expressions (e.g. D + B + C + G)
+    target_concat_str = col if "+" in col else (notes if "+" in notes else "")
+    if target_concat_str and not any(kw in notes_upper for kw in ["LINK", "JOIN", "MATRIX", "LOOKUP", "DECIMAL", "ELEMENT"]):
+        parts = [p.strip() for p in target_concat_str.split("+")]
+        valid_cols = []
+        is_pure_concat = True
+        for p in parts:
+            p_clean = re.sub(r"^(COL|COLUMN)\s+", "", p, flags=re.IGNORECASE).strip().upper()
+            if re.match(r"^[A-Z]{1,2}$", p_clean) and p_clean not in ENGLISH_STOP_WORDS:
+                valid_cols.append(p_clean)
             else:
-                readable = f"IF ({b_count} CONDITIONS)"
-
+                is_pure_concat = False
+                break
+        if is_pure_concat and len(valid_cols) >= 2:
+            concat_dsl = ConcatRuleDSL(cols=valid_cols, delimiter=" ")
             return {
-                "rule_type": "CONDITIONAL",
-                "dsl_obj": cond_dsl,
-                "dsl_readable": readable,
+                "rule_type": "CONCAT",
+                "dsl_obj": concat_dsl,
+                "dsl_readable": f"CONCAT({', '.join(valid_cols)})",
                 "status": "AUTO_PARSED",
             }
 
+    # 3. CONDITIONAL: Handle simple IF ... THEN ... ELSE logic
+    if "IF " in notes_upper or "IF\n" in notes_upper or notes_upper.startswith("IF"):
+        if not any(kw in notes_upper for kw in ["LINK", "JOIN", "MATRIX", "DECIMAL", "ELEMENT"]):
+            branches = parse_chained_ifs(notes, default_col=col)
+            if branches:
+                branch_models = [BranchModel(**b) for b in branches]
+                cond_dsl = ConditionalRuleDSL(
+                    if_col=branch_models[0].if_col,
+                    if_val=branch_models[0].if_val,
+                    then_val=branch_models[0].then_val,
+                    else_val=branch_models[0].else_val,
+                    branches=branch_models,
+                    raw_condition=notes,
+                )
+
+                b_count = len(branch_models)
+                if b_count == 1:
+                    b = branch_models[0]
+                    readable = f"IF COL_{b.if_col} == '{b.if_val}' THEN '{b.then_val}'"
+                    if b.else_val:
+                        readable += f" ELSE '{b.else_val}'"
+                else:
+                    readable = f"IF ({b_count} CONDITIONS)"
+
+                return {
+                    "rule_type": "CONDITIONAL",
+                    "dsl_obj": cond_dsl,
+                    "dsl_readable": readable,
+                    "status": "AUTO_PARSED",
+                }
+
+    # 4. MATRIX_LOOKUP: Only simple matrix references without complex LINK/JOIN logic
     if any(k in notes_upper for k in ["MATRIX", "LOOKUP"]):
-        match = re.search(r"ASSIGN\s+([A-Za-z0-9_\\-\\.]+)", notes, re.IGNORECASE)
-        ref = match.group(1) if match else "MATRIX_LOOKUP"
+        if not any(kw in notes_upper for kw in ["LINK", "JOIN", "DECIMAL", "ELEMENT", "AFTER", "BEFORE"]):
+            match = re.search(r"ASSIGN\s+([A-Za-z0-9_\-\.]+)", notes, re.IGNORECASE)
+            ref = match.group(1) if match else "MATRIX_LOOKUP"
 
-        matrix_dsl = MatrixLookupRuleDSL(
-            target_ref=ref,
-            source_file=data_file,
-            source_column=col,
-            raw_notes=notes,
-        )
-        return {
-            "rule_type": "MATRIX_LOOKUP",
-            "dsl_obj": matrix_dsl,
-            "dsl_readable": f"LOOKUP('{ref}')",
-            "status": "AUTO_PARSED",
-        }
+            matrix_dsl = MatrixLookupRuleDSL(
+                target_ref=ref,
+                source_file=data_file,
+                source_column=col,
+                raw_notes=notes,
+            )
+            return {
+                "rule_type": "MATRIX_LOOKUP",
+                "dsl_obj": matrix_dsl,
+                "dsl_readable": f"LOOKUP('{ref}')",
+                "status": "AUTO_PARSED",
+            }
 
-    if notes_upper.startswith("ASSIGN"):
+    # 5. ASSIGN / CREATE: Check if it's a simple CONSTANT vs CROSS_FIELD_REF vs COMPLEX LOGIC (LLM)
+    if notes_upper.startswith("ASSIGN") or notes_upper.startswith("CREATE"):
         val = clean_action_val(notes)
         is_field_ref = bool(
             re.match(
-                r"^(MB|DP|LN|DP-TYPE|LN-TYPE|CU|CHECK_ACCOUNT_HOLDS|SAVINGS_ACCOUNTS)\.[A-Za-z0-9_\\-]+",
+                r"^(MB|DP|LN|DP-TYPE|LN-TYPE|CU|CHECK_ACCOUNT_HOLDS|SAVINGS_ACCOUNTS)\.[A-Za-z0-9_\-]+$",
                 val,
                 re.IGNORECASE,
             )
@@ -281,7 +354,7 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
                 "dsl_readable": f"REF('{val}')",
                 "status": "AUTO_PARSED",
             }
-        else:
+        elif is_simple_constant(val):
             const_dsl = ConstantRuleDSL(value=val)
             return {
                 "rule_type": "CONSTANT",
@@ -289,7 +362,17 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
                 "dsl_readable": f"CONST('{val}')",
                 "status": "AUTO_PARSED",
             }
+        else:
+            # Complex narrative instructions after ASSIGN -> route to LLM
+            unparsed_dsl = UnparsedRuleDSL(raw_notes=notes)
+            return {
+                "rule_type": "UNPARSED",
+                "dsl_obj": unparsed_dsl,
+                "dsl_readable": "NEEDS_LLM_PARSING",
+                "status": "NEEDS_REVIEW",
+            }
 
+    # 6. DIRECT: Simple column reference with empty notes
     if col_upper and not notes_upper:
         direct_dsl = DirectRuleDSL(
             source_file=data_file,
@@ -302,6 +385,7 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
             "status": "AUTO_PARSED",
         }
 
+    # 7. Default Fallback: Route all complex narrative instructions to LLM
     unparsed_dsl = UnparsedRuleDSL(raw_notes=notes)
     return {
         "rule_type": "UNPARSED",
@@ -327,6 +411,7 @@ def process_mapping_sheet(
     }
     current_section = f"{sheet_name} - General"
     active_data_file = ""
+    section_rule_counter = 0
 
     field_col_idx = None
     data_file_col_idx = None
@@ -369,6 +454,7 @@ def process_mapping_sheet(
             if clean_sec_name and len(clean_sec_name) < 100:
                 current_section = clean_sec_name
                 active_data_file = ""
+                section_rule_counter = 0  # Reset counter per section
                 print(f"📌 Scanning Data Section: [{current_section}]")
 
         if any(kw in row_str.upper() for kw in ["ONLY CONSIDERED", "ONLY CREATE", "DO NOT CREATE", "LINK "]):
@@ -376,9 +462,12 @@ def process_mapping_sheet(
             sec_dsl_obj: SectionRuleDSL = parsed_sec["dsl_obj"]
 
             if sec_dsl_obj.filter_condition or sec_dsl_obj.join_rule:
+                section_rule_counter += 1
+                sec_target_field = f"_SECTION_RULE_{section_rule_counter}"
+                
                 cursor.execute(
                     """
-                    INSERT OR REPLACE INTO rule_store 
+                    INSERT INTO rule_store 
                     (cu_id, sheet_name, section_name, target_field, raw_notes, data_file, column_letter, rule_type, dsl_json, dsl_readable, status, parsed_by)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
@@ -386,7 +475,7 @@ def process_mapping_sheet(
                         cu_id,
                         sheet_name,
                         current_section,
-                        "_SECTION_RULE_",
+                        sec_target_field,
                         row_str,
                         "",
                         "",
@@ -433,27 +522,51 @@ def process_mapping_sheet(
         parsed_res = parse_notes_to_dsl(data_file, col, raw_notes)
         rule_dsl_obj = parsed_res["dsl_obj"]
 
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO rule_store 
-            (cu_id, sheet_name, section_name, target_field, raw_notes, data_file, column_letter, rule_type, dsl_json, dsl_readable, status, parsed_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                cu_id,
-                sheet_name,
-                current_section,
-                target_field,
-                raw_notes,
-                data_file,
-                col,
-                parsed_res["rule_type"],
-                rule_dsl_obj.model_dump_json(),
-                parsed_res["dsl_readable"],
-                parsed_res["status"],
-                "SYSTEM",
-            ),
-        )
+        try:
+            cursor.execute(
+                """
+                INSERT INTO rule_store 
+                (cu_id, sheet_name, section_name, target_field, raw_notes, data_file, column_letter, rule_type, dsl_json, dsl_readable, status, parsed_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    cu_id,
+                    sheet_name,
+                    current_section,
+                    target_field,
+                    raw_notes,
+                    data_file,
+                    col,
+                    parsed_res["rule_type"],
+                    rule_dsl_obj.model_dump_json(),
+                    parsed_res["dsl_readable"],
+                    parsed_res["status"],
+                    "SYSTEM",
+                ),
+            )
+        except sqlite3.IntegrityError:
+            # Fallback if duplicate target_field exists in the exact same section in Excel
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO rule_store 
+                (cu_id, sheet_name, section_name, target_field, raw_notes, data_file, column_letter, rule_type, dsl_json, dsl_readable, status, parsed_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    cu_id,
+                    sheet_name,
+                    current_section,
+                    target_field,
+                    raw_notes,
+                    data_file,
+                    col,
+                    parsed_res["rule_type"],
+                    rule_dsl_obj.model_dump_json(),
+                    parsed_res["dsl_readable"],
+                    parsed_res["status"],
+                    "SYSTEM",
+                ),
+            )
 
         if parsed_res["rule_type"] == "NO_MAPPING":
             stats["no_mapping"] += 1
