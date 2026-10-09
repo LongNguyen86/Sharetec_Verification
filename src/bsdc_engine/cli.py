@@ -26,6 +26,38 @@ def get_latest_run_id() -> str | None:
     return max(run_folders, key=lambda x: x.stat().st_mtime).name if run_folders else None
 
 
+def _resolve_cu_id(args_cu_id: str | None, ws: RunWorkspace) -> str | None:
+    """Automatically resolve Credit Union ID from CLI args, run_id pattern, or SQLite DB."""
+    if args_cu_id:
+        return args_cu_id
+
+    # 1. Extract from run_id naming pattern (e.g., run_EVIZI_20261009_113627 -> EVIZI)
+    match = re.search(r"run_([A-Za-z0-9]+)_\d+", ws.run_id)
+    if match:
+        return match.group(1)
+
+    # 2. Fallback to querying rule_store SQLite DB
+    try:
+        from src.bsdc_engine.rules.store import RuleStore
+        from src.bsdc_engine.config import settings
+
+        db_file = getattr(ws, "db_path", None) or settings.db_path
+        if db_file.exists():
+            store = RuleStore(db_path=db_file)
+            with store.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT DISTINCT cu_id FROM rule_store WHERE cu_id IS NOT NULL AND cu_id != '' LIMIT 1"
+                )
+                row = cursor.fetchone()
+                if row:
+                    return row[0]
+    except Exception:
+        pass
+
+    return None
+
+
 def _organize_file(file_path: Path, ws: RunWorkspace) -> Path:
     """Route downloaded file to correct target subfolder based on filename keywords."""
     if file_path.parent.resolve() in (
@@ -146,7 +178,7 @@ def main():
         client = SharePointClient()
 
         downloaded = []
-        cu_id = getattr(args, "cu_id", None)
+        cu_id = _resolve_cu_id(getattr(args, "cu_id", None), ws)
         sp_path = getattr(args, "sp_path", None)
 
         if cu_id or sp_path:
@@ -189,7 +221,7 @@ def main():
     elif args.command == "validate-mapping":
         from src.bsdc_engine.validate.mapping import MappingValidator
 
-        cu_id = getattr(args, "cu_id", None)
+        cu_id = _resolve_cu_id(getattr(args, "cu_id", None), ws)
         if cu_id and ws.mapping_dir.exists():
             clean_cu = re.sub(r'[^a-z0-9]', '', cu_id.lower())
             for f in list(ws.mapping_dir.glob("*.xlsx")):
@@ -211,7 +243,8 @@ def main():
 
     elif args.command == "parse-rules":
         from src.bsdc_engine.rules.parser import parse_all_mapping_sheets
-        parse_all_mapping_sheets(raw_dir=ws.mapping_dir, cu_id=getattr(args, "cu_id", None))
+        cu_id = _resolve_cu_id(getattr(args, "cu_id", None), ws)
+        parse_all_mapping_sheets(raw_dir=ws.mapping_dir, cu_id=cu_id)
         print(f"✅ Rule parsing completed. Extracted rules from {ws.mapping_dir} into SQLite database.")
 
     elif args.command == "ai-parse":
@@ -222,7 +255,8 @@ def main():
 
     elif args.command == "export-qa":
         from src.bsdc_engine.report.rule_verification import export_rule_verification_report
-        export_rule_verification_report(output_dir=ws.qa_reports_dir, cu_id=getattr(args, "cu_id", None))
+        cu_id = _resolve_cu_id(getattr(args, "cu_id", None), ws)
+        export_rule_verification_report(output_dir=ws.qa_reports_dir, cu_id=cu_id)
 
     elif args.command == "apply-qa":
         from src.bsdc_engine.rules.decisions import apply_qa_decisions
@@ -232,6 +266,8 @@ def main():
     elif args.command == "generate":
         from src.bsdc_engine.generate.builders import TransformationBuilder
         from src.bsdc_engine.config import settings
+
+        cu_id = _resolve_cu_id(getattr(args, "cu_id", None), ws)
 
         out_dir = getattr(ws, "transformed_dir", ws.reconciliation_dir)
         db_file = getattr(ws, "db_path", None) or settings.db_path
@@ -243,7 +279,7 @@ def main():
             output_dir=out_dir,
             db_path=db_file
         )
-        results = builder.generate_all(cu_id=getattr(args, "cu_id", None))
+        results = builder.generate_all(cu_id=cu_id)
         print(f"✅ Transformation completed. Generated {len(results)} tables into {out_dir}.")
 
     elif args.command == "verify":
@@ -307,7 +343,6 @@ def main():
         from src.bsdc_engine.verify.comparator import DataComparator
         from src.bsdc_engine.verify.formats import FormatValidator
         from src.bsdc_engine.verify.worksheet_assembler import assemble_verification_worksheet
-        from src.bsdc_engine.rules.store import RuleStore
 
         exp_dir = getattr(ws, "reconciliation_dir", None) or (ws.out_dir / "reconciliation")
         act_dir = ws.actual_dir
@@ -317,18 +352,7 @@ def main():
             print(f"❌ No Expected CSV files found for worksheet assembly in: {exp_dir}")
             sys.exit(1)
 
-        cu_id = getattr(args, "cu_id", None)
-        if not cu_id:
-            match = re.search(r"run_([A-Za-z0-9]+)_\d+", ws.run_id)
-            if match:
-                cu_id = match.group(1)
-            else:
-                store = RuleStore(db_path=getattr(ws, "db_path", None))
-                with store.get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT DISTINCT cu_id FROM rule_store WHERE cu_id IS NOT NULL AND cu_id != '' LIMIT 1")
-                    row = cursor.fetchone()
-                    cu_id = row[0] if row else "CU"
+        cu_id = _resolve_cu_id(getattr(args, "cu_id", None), ws) or "CU"
 
         verification_results = []
         for exp_file in target_files:
