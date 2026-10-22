@@ -14,7 +14,7 @@ from src.bsdc_engine.text import clean_sharepoint_path
 
 logger = get_logger(__name__)
 
-ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xlsm", ".xls"}
+ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xlsm", ".xls", ".d"}
 
 
 class SharePointClient:

@@ -39,6 +39,42 @@ class TransformationBuilder:
         self.direct_executor = DirectExecutor()
         self.constant_executor = ConstantExecutor(conditional_executor=self.conditional_executor)
 
+    @staticmethod
+    def _is_complex_conditional(dsl_dict: dict, raw_notes: str | None) -> bool:
+        """Determine if a conditional rule is too complex for regex heuristics and requires LLM parsing."""
+        if not dsl_dict and not raw_notes:
+            return False
+
+        # Explicit complex or unparsed flag in DSL JSON
+        if dsl_dict.get("is_complex") or dsl_dict.get("status") in ("NEEDS_REVIEW", "UNPARSED"):
+            return True
+
+        notes = (raw_notes or "").strip().upper()
+        if not notes:
+            return False
+
+        # Multiple branches or multi-clause IF statements
+        if notes.count("IF ") > 1 or notes.count("WHEN ") > 1 or "ELSE IF" in notes:
+            return True
+
+        # Complex boolean operator combinations
+        if " AND " in notes and " OR " in notes:
+            return True
+
+        # Cross-field references, external lookups, or custom calculations
+        complex_keywords = [
+            "REFER TO", "LOOKUP", "CALCULATE", "CROSS", "SUM(", "SUBSTRING",
+            "DEPENDS ON", "BASED ON FIELD", "BETWEEN", "CASE WHEN"
+        ]
+        if any(kw in notes for kw in complex_keywords):
+            return True
+
+        # Long unstructured notes lacking concrete structured DSL conditions
+        if not dsl_dict.get("conditions") and len(notes) > 70:
+            return True
+
+        return False
+
     def generate_all(self, cu_id: str) -> list[GenerateResult]:
         tables = {}
         for d in self.raw_data_dirs:
@@ -223,16 +259,52 @@ class TransformationBuilder:
                     # STEP C: PROCESS FIELD MAPPINGS AND TRANSFORMATIONS
                     output_data = {}
                     cursor.execute(
-                        "SELECT target_field, data_file, column_letter, rule_type, dsl_json, raw_notes FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND target_field NOT LIKE '_SECTION_RULE_%' ORDER BY id ASC",
+                        "SELECT id, target_field, data_file, column_letter, rule_type, dsl_json, raw_notes FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND target_field NOT LIKE '_SECTION_RULE_%' ORDER BY id ASC",
                         (cu_id, current_sheet, sec),
                     )
                     field_rules = cursor.fetchall()
                     total_rows = base_df.shape[0]
 
-                    for field, src_file, src_col, rule_type, dsl_json_str, raw_notes in field_rules:
+                    for rule_id, field, src_file, src_col, rule_type, dsl_json_str, raw_notes in field_rules:
                         dsl_dict = json.loads(dsl_json_str) if dsl_json_str else {}
 
-                        if rule_type == "DIRECT":
+                        # Flag cross-field reference rules for LLM parsing and avoid emitting garbage data
+                        if rule_type in ("CROSS_FIELD", "CROSS_FIELD_REF"):
+                            logger.warning(
+                                f"Field [{field}] has rule_type '{rule_type}'. Downgraded to UNPARSED / NEEDS_REVIEW / NEEDS_LLM_PARSING."
+                            )
+                            dsl_dict["status"] = "NEEDS_REVIEW"
+                            dsl_dict["requires_llm"] = True
+                            dsl_dict["draft_rule_dsl"] = "NEEDS_LLM_PARSING"
+                            dsl_dict["review_reason"] = f"Unsupported rule_type '{rule_type}' without LLM resolution"
+                            
+                            # Update all status markers in SQLite database
+                            try:
+                                cursor.execute(
+                                    """
+                                    UPDATE rule_store 
+                                    SET rule_type = 'UNPARSED',
+                                        current_status = 'NEEDS_REVIEW',
+                                        draft_rule_dsl = 'NEEDS_LLM_PARSING',
+                                        dsl_json = ? 
+                                    WHERE id = ?
+                                    """,
+                                    (json.dumps(dsl_dict), rule_id),
+                                )
+                            except Exception:
+                                # Fallback if specific columns do not exist in schema
+                                cursor.execute(
+                                    "UPDATE rule_store SET rule_type = 'UNPARSED', dsl_json = ? WHERE id = ?",
+                                    (json.dumps(dsl_dict), rule_id),
+                                )
+                            conn.commit()
+                            output_data[field] = pl.Series([None] * total_rows)
+
+                        # Completely skip execution for rules requiring manual review or lacking mapping
+                        elif rule_type in ("NO_MAPPING", "UNPARSED", "NEEDS_REVIEW"):
+                            output_data[field] = pl.Series([None] * total_rows)
+
+                        elif rule_type == "DIRECT":
                             expr = self.direct_executor.evaluate(field, src_file, src_col, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
                             if expr is not None:
                                 output_data[field] = base_df.with_columns(expr.alias(field))[field]
@@ -244,10 +316,26 @@ class TransformationBuilder:
                             expr = self.constant_executor.evaluate(field, src_file, src_col, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
                             output_data[field] = base_df.with_columns(expr.alias(field))[field] if expr is not None else pl.Series([None] * total_rows)
 
-                        elif rule_type == "NO_MAPPING":
-                            output_data[field] = pl.Series([None] * total_rows)
+                        elif rule_type == "CONDITIONAL":
+                            # Route complex conditionals to UNPARSED / NEEDS_REVIEW instead of executing naive regex
+                            if self._is_complex_conditional(dsl_dict, raw_notes):
+                                logger.warning(
+                                    f"Field [{field}] contains complex CONDITIONAL logic. Flagged as UNPARSED / NEEDS_REVIEW for LLM parsing."
+                                )
+                                dsl_dict["status"] = "NEEDS_REVIEW"
+                                dsl_dict["requires_llm"] = True
+                                dsl_dict["review_reason"] = "Complex conditional logic requires LLM parsing"
+                                cursor.execute(
+                                    "UPDATE rule_store SET rule_type = 'UNPARSED', dsl_json = ? WHERE id = ?",
+                                    (json.dumps(dsl_dict), rule_id),
+                                )
+                                conn.commit()
+                                output_data[field] = pl.Series([None] * total_rows)
+                            else:
+                                cond_expr = self.conditional_executor.evaluate(field, src_file, src_col, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
+                                output_data[field] = base_df.with_columns(cond_expr.alias(field))[field] if cond_expr is not None else pl.Series([None] * total_rows)
 
-                        else:  # CONDITIONAL, MATRIX_LOOKUP, UNPARSED
+                        else:  # MATRIX_LOOKUP and other fallback rules
                             cond_expr = self.conditional_executor.evaluate(field, src_file, src_col, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
                             output_data[field] = base_df.with_columns(cond_expr.alias(field))[field] if cond_expr is not None else pl.Series([None] * total_rows)
 
@@ -273,7 +361,11 @@ class TransformationBuilder:
 
                     sheet_clean = re.sub(r'[\\/*?:"<>|]', "_", current_sheet).strip().replace(" ", "_")
                     sheet_clean = re.sub(r"^_+", "", sheet_clean)
-                    filename = f"{cu_id}_{sheet_clean}.csv" if not sheet_clean.startswith("(") else f"{cu_id}{sheet_clean}.csv"
+                    filename = (
+                        f"{cu_id}_{sheet_clean}_processed_data.csv"
+                        if not sheet_clean.startswith("(")
+                        else f"{cu_id}{sheet_clean}_processed_data.csv"
+           )
                     out_file = self.output_dir / filename
 
                     final_sheet_df.write_csv(out_file)

@@ -32,8 +32,10 @@ class RunWorkspace:
         self.out_dir = self.base_dir / "output"
         self.csv_dir = self.out_dir / "csv"
         self.qa_reports_dir = self.out_dir / "qa_reports"
-        self.reconciliation_dir = self.out_dir / "reconciliation"
+        self.data_process_dir = self.out_dir / "data_process"
 
+        self.reconciliation_dir = self.data_process_dir
+        
         # 3. Test Output Directory Structure
         self.test_output_dir = self.base_dir / "test-output"
 
@@ -48,6 +50,6 @@ class RunWorkspace:
 
         self.csv_dir.mkdir(parents=True, exist_ok=True)
         self.qa_reports_dir.mkdir(parents=True, exist_ok=True)
-        self.reconciliation_dir.mkdir(parents=True, exist_ok=True)
+        self.data_process_dir.mkdir(parents=True, exist_ok=True)
 
         self.test_output_dir.mkdir(parents=True, exist_ok=True)

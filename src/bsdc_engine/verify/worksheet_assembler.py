@@ -24,34 +24,45 @@ def clean_key(text: str) -> str:
 
 def strip_table_suffixes(name: str) -> str:
     """
-    Remove common suffixes like 'table', 'discrepancies', 'discrepancy' to match section names accurately.
+    Remove common suffixes like 'table', 'discrepancies', 'discrepancy', 'processed_data', 'extracted_data'
+    to match section names accurately.
     """
     ck = clean_key(name)
-    for suffix in ["discrepancies", "discrepancy", "discrepant", "table", "report", "mismatches", "variances"]:
-        if ck.endswith(suffix):
-            ck = ck[:-len(suffix)]
+    suffixes = [
+        "processeddata", "extracteddata", "processed_data", "extracted_data",
+        "discrepancies", "discrepancy", "discrepant", "table", "report", 
+        "mismatches", "variances"
+    ]
+    changed = True
+    while changed:
+        changed = False
+        for suffix in suffixes:
+            if ck.endswith(suffix):
+                ck = ck[:-len(suffix)]
+                changed = True
+                break
     return ck
 
 
 def get_section_scope(sec_name: str) -> tuple[str, list[str]]:
     """
     Determine table code and specific sub-section keywords to map CSV to exact HTML Tab.
+    Accurately classifies Shares, Deposits, CDs, and IRAs under table code 'dp'.
     """
     s = sec_name.lower()
-    
-    if "mb_table" in s or ("mb" in s and "table" in s and "dp" not in s and "ln" not in s):
-        return "mb", ["panel-member", "member", "mb records", "member records"]
-    
-    if "dp_table" in s or "deposit" in s or "dp" in s:
+
+    # 1. Deposit / Shares Table (dp) - Match 'share', 'deposit', 'dp', 'cd', 'ira'
+    if any(k in s for k in ["deposit", "share", "reg", "sd", "cd", "certificate", "ira", "dp"]):
         if "certificate" in s or "cd" in s:
             return "dp", ["panel-dep-cd", "dep-cd", "deposit cd", "certificate", "certificates"]
         elif "ira" in s:
             return "dp", ["panel-dep-ira", "dep-ira", "deposit ira", "ira"]
-        elif "share" in s or "reg" in s or "sd" in s:
+        elif "share" in s or "reg" in s or "sd" in s or "dp" in s:
             return "dp", ["panel-dep-reg", "dep-reg", "deposit reg", "sd", "share", "regular"]
         return "dp", ["deposit"]
-        
-    if "ln_table" in s or "lending" in s or "loan" in s or "ln" in s:
+
+    # 2. Lending Table (ln) - Match 'loan', 'lending', 'loc', 'mort', 'conv', 'ln'
+    if any(k in s for k in ["loan", "lending", "loc", "mort", "conv", "ln"]):
         if "loc" in s:
             return "ln", ["panel-lending-loc", "lending-loc", "lending loc", "line of credit", "loc"]
         elif "mort" in s:
@@ -59,7 +70,11 @@ def get_section_scope(sec_name: str) -> tuple[str, list[str]]:
         elif "conv" in s:
             return "ln", ["panel-lending-conv", "lending-conv", "lending conv", "conventional", "conv"]
         return "ln", ["lending"]
-        
+
+    # 3. Member Table (mb) - Match 'member', 'mb'
+    if "mb" in s or "member" in s:
+        return "mb", ["panel-member", "member", "mb records", "member records"]
+
     return "mb", ["member"]
 
 

@@ -290,6 +290,22 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
         if not any(kw in notes_upper for kw in ["LINK", "JOIN", "MATRIX", "DECIMAL", "ELEMENT"]):
             branches = parse_chained_ifs(notes, default_col=col)
             if branches:
+                # Check for complex branch conditions or cross-field references in conditionals
+                is_complex = len(branches) > 3
+                for b in branches:
+                    if "." in str(b.get("if_val", "")) or (b.get("then_val") and not is_simple_constant(str(b.get("then_val")))):
+                        is_complex = True
+                        break
+
+                if is_complex:
+                    unparsed_dsl = UnparsedRuleDSL(raw_notes=notes)
+                    return {
+                        "rule_type": "UNPARSED",
+                        "dsl_obj": unparsed_dsl,
+                        "dsl_readable": "NEEDS_LLM_PARSING",
+                        "status": "NEEDS_REVIEW",
+                    }
+
                 branch_models = [BranchModel(**b) for b in branches]
                 cond_dsl = ConditionalRuleDSL(
                     if_col=branch_models[0].if_col,
@@ -335,24 +351,25 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
                 "status": "AUTO_PARSED",
             }
 
-    # 5. ASSIGN / CREATE: Check if it's a simple CONSTANT vs CROSS_FIELD_REF vs COMPLEX LOGIC (LLM)
+    # 5. ASSIGN / CREATE: Route cross-field references and complex narrative notes to UNPARSED for LLM resolution
     if notes_upper.startswith("ASSIGN") or notes_upper.startswith("CREATE"):
         val = clean_action_val(notes)
         is_field_ref = bool(
             re.match(
-                r"^(MB|DP|LN|DP-TYPE|LN-TYPE|CU|CHECK_ACCOUNT_HOLDS|SAVINGS_ACCOUNTS)\.[A-Za-z0-9_\-]+$",
+                r"^[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+$",
                 val,
                 re.IGNORECASE,
             )
         )
 
+        # Route all cross-field references (e.g. ASSIGN MB.BRANCH) directly to UNPARSED / NEEDS_REVIEW
         if is_field_ref:
             unparsed_dsl = UnparsedRuleDSL(raw_notes=notes)
             return {
-                "rule_type": "CROSS_FIELD_REF",
+                "rule_type": "UNPARSED",
                 "dsl_obj": unparsed_dsl,
-                "dsl_readable": f"REF('{val}')",
-                "status": "AUTO_PARSED",
+                "dsl_readable": "NEEDS_LLM_PARSING",
+                "status": "NEEDS_REVIEW",
             }
         elif is_simple_constant(val):
             const_dsl = ConstantRuleDSL(value=val)
