@@ -22,10 +22,10 @@ class ConstantExecutor(BaseExecutor):
         clean_val = re.split(r";|\bIF\b", val_raw, flags=re.IGNORECASE)[0]
         clean_val = re.sub(r"^ASSIGN\s+(ALL\s+)?", "", clean_val, flags=re.IGNORECASE).strip()
 
-        if any(
-            clean_val.upper().startswith(prefix)
-            for prefix in ["MB.", "DP.", "LN.", "DP-TYPE.", "LN-TYPE.", "CU."]
-        ):
+        # Generic pattern to detect cross-table field references across any module (e.g. GL.ACCOUNT, MB.NUMBER, CARD.STATUS)
+        is_field_reference = bool(re.match(r"^[A-Z0-9_\-]+\.[A-Z0-9_\-]+", clean_val.upper()))
+
+        if is_field_reference:
             if self.conditional_executor:
                 return self.conditional_executor.evaluate(
                     target_field, src_file, src_col, dsl_dict, raw_notes, df, default_table, sec_name

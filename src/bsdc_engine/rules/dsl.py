@@ -21,6 +21,9 @@ class BranchModel(BaseModel):
     then_val: Optional[str] = None
     else_val: Optional[str] = None
     raw_condition: Optional[str] = None
+    condition_tree: Optional[List[List[dict]]] = None
+    sub_conditions: Optional[List[dict]] = None
+    combine_op: Optional[str] = "AND"
 
 
 class ConditionalRuleDSL(BaseModel):

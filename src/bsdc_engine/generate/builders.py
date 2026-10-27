@@ -10,12 +10,12 @@ from src.bsdc_engine.generate.executors.direct import DirectExecutor
 from src.bsdc_engine.generate.executors.constant import ConstantExecutor
 from src.bsdc_engine.generate.executors.conditional import ConditionalExecutor
 from src.bsdc_engine.generate.executors.section import parse_section_filter_expr
+from src.bsdc_engine.generate.resolver import resolve_column_name
 from src.bsdc_engine.models.results import GenerateResult
 from src.bsdc_engine.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Preferred Credit Union key column indices for auto-join fallback (0=Col A Member Num, 6=Col G, 16=Col Q)
 PREFERRED_JOIN_INDICES = ["0", "6", "16", "1"]
 
 
@@ -38,42 +38,6 @@ class TransformationBuilder:
         self.conditional_executor = ConditionalExecutor()
         self.direct_executor = DirectExecutor()
         self.constant_executor = ConstantExecutor(conditional_executor=self.conditional_executor)
-
-    @staticmethod
-    def _is_complex_conditional(dsl_dict: dict, raw_notes: str | None) -> bool:
-        """Determine if a conditional rule is too complex for regex heuristics and requires LLM parsing."""
-        if not dsl_dict and not raw_notes:
-            return False
-
-        # Explicit complex or unparsed flag in DSL JSON
-        if dsl_dict.get("is_complex") or dsl_dict.get("status") in ("NEEDS_REVIEW", "UNPARSED"):
-            return True
-
-        notes = (raw_notes or "").strip().upper()
-        if not notes:
-            return False
-
-        # Multiple branches or multi-clause IF statements
-        if notes.count("IF ") > 1 or notes.count("WHEN ") > 1 or "ELSE IF" in notes:
-            return True
-
-        # Complex boolean operator combinations
-        if " AND " in notes and " OR " in notes:
-            return True
-
-        # Cross-field references, external lookups, or custom calculations
-        complex_keywords = [
-            "REFER TO", "LOOKUP", "CALCULATE", "CROSS", "SUM(", "SUBSTRING",
-            "DEPENDS ON", "BASED ON FIELD", "BETWEEN", "CASE WHEN"
-        ]
-        if any(kw in notes for kw in complex_keywords):
-            return True
-
-        # Long unstructured notes lacking concrete structured DSL conditions
-        if not dsl_dict.get("conditions") and len(notes) > 70:
-            return True
-
-        return False
 
     def generate_all(self, cu_id: str) -> list[GenerateResult]:
         tables = {}
@@ -126,7 +90,7 @@ class TransformationBuilder:
                     base_cols = [f"{default_table_key}::col_{i}" for i in range(df_primary.shape[1])]
                     base_df = df_primary.rename(dict(zip(df_primary.columns, base_cols)))
 
-                    # Clean non-ASCII bytes, Unicode BOMs, whitespace, and decimal artifacts from primary DataFrame
+                    # Clean non-ASCII bytes, whitespace, and decimal artifacts from primary DataFrame
                     base_df = base_df.with_columns([
                         pl.col(c)
                         .cast(pl.Utf8)
@@ -137,12 +101,12 @@ class TransformationBuilder:
                         for c in base_df.columns
                     ])
 
-                    # Track absolute row order index from primary source table for generic output sorting
+                    # Track row order index for horizontal section joining
                     base_df = base_df.with_columns(
                         pl.Series("_orig_row_idx", list(range(base_df.shape[0])))
                     )
 
-                    # STEP A: APPLY SECTION FILTER PRIOR TO JOINING
+                    # STEP A: APPLY SECTION FILTER
                     cursor.execute(
                         "SELECT dsl_json, raw_notes FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND target_field LIKE '_SECTION_RULE_%' LIMIT 1",
                         (cu_id, current_sheet, sec),
@@ -171,7 +135,7 @@ class TransformationBuilder:
                                 except Exception as e:
                                     logger.error(f"Section filter error: {e}")
 
-                    # STEP B: JOIN SECONDARY TABLES ACCORDING TO PARSED JOIN_RULE SPECIFICATIONS
+                    # STEP B: JOIN SECONDARY TABLES
                     cursor.execute(
                         "SELECT DISTINCT data_file FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND data_file IS NOT NULL AND data_file != '' AND data_file != 'N/A'",
                         (cu_id, current_sheet, sec),
@@ -209,15 +173,10 @@ class TransformationBuilder:
                                     left_key = f"{default_table_key}::col_{tgt_idx}"
                                     right_key = f"{sec_file}::col_{src_idx}"
 
-                            # Prioritized Fallback: Match on Member Number (Col A = "0") if no explicit LINK rule exists
                             if not left_key or not right_key:
                                 primary_col_indices = [c.split("::col_")[-1] for c in base_df.columns if "::col_" in c]
                                 sec_col_indices = [c.split("::col_")[-1] for c in sec_df.columns if "::col_" in c]
-                                
-                                common_indices = [
-                                    idx for idx in PREFERRED_JOIN_INDICES 
-                                    if idx in primary_col_indices and idx in sec_col_indices
-                                ]
+                                common_indices = [idx for idx in PREFERRED_JOIN_INDICES if idx in primary_col_indices and idx in sec_col_indices]
                                 if not common_indices:
                                     common_indices = [idx for idx in primary_col_indices if idx in sec_col_indices]
 
@@ -225,139 +184,81 @@ class TransformationBuilder:
                                     selected_idx = common_indices[0]
                                     left_key = f"{default_table_key}::col_{selected_idx}"
                                     right_key = f"{sec_file}::col_{selected_idx}"
-                                    logger.info(f"Auto-matched join key col_{selected_idx} between [{default_table_key}] and [{sec_file}]")
 
                             if left_key and right_key and left_key in base_df.columns and right_key in sec_df.columns:
                                 try:
                                     base_df = base_df.with_columns(
-                                        pl.col(left_key)
-                                        .cast(pl.Utf8)
-                                        .str.replace_all(r"[^\x20-\x7E]", "")
-                                        .str.strip_chars()
-                                        .str.replace_all(r"\.0+$", "")
-                                        .alias(left_key)
+                                        pl.col(left_key).cast(pl.Utf8).str.strip_chars().str.replace_all(r"\.0+$", "").alias(left_key)
                                     )
                                     sec_df = sec_df.with_columns(
-                                        pl.col(right_key)
-                                        .cast(pl.Utf8)
-                                        .str.replace_all(r"[^\x20-\x7E]", "")
-                                        .str.strip_chars()
-                                        .str.replace_all(r"\.0+$", "")
-                                        .alias(right_key)
+                                        pl.col(right_key).cast(pl.Utf8).str.strip_chars().str.replace_all(r"\.0+$", "").alias(right_key)
                                     )
                                     valid_sec_df = sec_df.filter(
-                                        pl.col(right_key).is_not_null() &
-                                        (pl.col(right_key) != "") &
-                                        (pl.col(right_key) != "0") &
-                                        (pl.col(right_key) != "NULL") &
-                                        (pl.col(right_key) != "NONE")
+                                        pl.col(right_key).is_not_null() & (pl.col(right_key) != "") & (pl.col(right_key) != "0")
                                     )
                                     base_df = base_df.join(valid_sec_df, left_on=left_key, right_on=right_key, how="left")
                                 except Exception as e:
                                     logger.warning(f"Join warning for [{sec_file}]: {e}")
 
-                    # STEP C: PROCESS FIELD MAPPINGS AND TRANSFORMATIONS
+                    # STEP C: PROCESS FIELD TRANSFORMATIONS (READ-ONLY, NO DB MUTATIONS)
                     output_data = {}
                     cursor.execute(
-                        "SELECT id, target_field, data_file, column_letter, rule_type, dsl_json, raw_notes FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND target_field NOT LIKE '_SECTION_RULE_%' ORDER BY id ASC",
+                        "SELECT id, target_field, data_file, column_letter, rule_type, dsl_json, raw_notes, status FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND target_field NOT LIKE '_SECTION_RULE_%' ORDER BY id ASC",
                         (cu_id, current_sheet, sec),
                     )
                     field_rules = cursor.fetchall()
                     total_rows = base_df.shape[0]
 
-                    for rule_id, field, src_file, src_col, rule_type, dsl_json_str, raw_notes in field_rules:
+                    for rule_id, field, src_file, src_col, rule_type, dsl_json_str, raw_notes, rule_status in field_rules:
                         dsl_dict = json.loads(dsl_json_str) if dsl_json_str else {}
+                        clean_col_letter = re.findall(r"[A-Za-z]{1,3}", src_col)[0] if src_col and re.findall(r"[A-Za-z]{1,3}", src_col) else src_col
 
-                        # Flag cross-field reference rules for LLM parsing and avoid emitting garbage data
-                        if rule_type in ("CROSS_FIELD", "CROSS_FIELD_REF"):
-                            logger.warning(
-                                f"Field [{field}] has rule_type '{rule_type}'. Downgraded to UNPARSED / NEEDS_REVIEW / NEEDS_LLM_PARSING."
-                            )
-                            dsl_dict["status"] = "NEEDS_REVIEW"
-                            dsl_dict["requires_llm"] = True
-                            dsl_dict["draft_rule_dsl"] = "NEEDS_LLM_PARSING"
-                            dsl_dict["review_reason"] = f"Unsupported rule_type '{rule_type}' without LLM resolution"
-                            
-                            # Update all status markers in SQLite database
-                            try:
-                                cursor.execute(
-                                    """
-                                    UPDATE rule_store 
-                                    SET rule_type = 'UNPARSED',
-                                        current_status = 'NEEDS_REVIEW',
-                                        draft_rule_dsl = 'NEEDS_LLM_PARSING',
-                                        dsl_json = ? 
-                                    WHERE id = ?
-                                    """,
-                                    (json.dumps(dsl_dict), rule_id),
-                                )
-                            except Exception:
-                                # Fallback if specific columns do not exist in schema
-                                cursor.execute(
-                                    "UPDATE rule_store SET rule_type = 'UNPARSED', dsl_json = ? WHERE id = ?",
-                                    (json.dumps(dsl_dict), rule_id),
-                                )
-                            conn.commit()
-                            output_data[field] = pl.Series([None] * total_rows)
-
-                        # Completely skip execution for rules requiring manual review or lacking mapping
-                        elif rule_type in ("NO_MAPPING", "UNPARSED", "NEEDS_REVIEW"):
+                        # STRICT REQUIREMENT: If rule is UNPARSED, NEEDS_REVIEW, or NO_MAPPING, leave completely blank
+                        if (
+                            rule_type in ("NO_MAPPING", "UNPARSED", "NEEDS_REVIEW")
+                            or rule_status in ("NEEDS_REVIEW", "UNPARSED")
+                            or dsl_dict.get("status") in ("NEEDS_REVIEW", "UNPARSED")
+                        ):
                             output_data[field] = pl.Series([None] * total_rows)
 
                         elif rule_type == "DIRECT":
-                            expr = self.direct_executor.evaluate(field, src_file, src_col, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
-                            if expr is not None:
-                                output_data[field] = base_df.with_columns(expr.alias(field))[field]
-                            else:
-                                cond_expr = self.conditional_executor.evaluate(field, src_file, src_col, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
-                                output_data[field] = base_df.with_columns(cond_expr.alias(field))[field] if cond_expr is not None else pl.Series([None] * total_rows)
+                            expr = self.direct_executor.evaluate(field, src_file, clean_col_letter, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
+                            output_data[field] = base_df.with_columns(expr.alias(field))[field] if expr is not None else pl.Series([None] * total_rows)
 
                         elif rule_type == "CONSTANT":
-                            expr = self.constant_executor.evaluate(field, src_file, src_col, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
+                            expr = self.constant_executor.evaluate(field, src_file, clean_col_letter, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
                             output_data[field] = base_df.with_columns(expr.alias(field))[field] if expr is not None else pl.Series([None] * total_rows)
 
                         elif rule_type == "CONDITIONAL":
-                            # Route complex conditionals to UNPARSED / NEEDS_REVIEW instead of executing naive regex
-                            if self._is_complex_conditional(dsl_dict, raw_notes):
-                                logger.warning(
-                                    f"Field [{field}] contains complex CONDITIONAL logic. Flagged as UNPARSED / NEEDS_REVIEW for LLM parsing."
-                                )
-                                dsl_dict["status"] = "NEEDS_REVIEW"
-                                dsl_dict["requires_llm"] = True
-                                dsl_dict["review_reason"] = "Complex conditional logic requires LLM parsing"
-                                cursor.execute(
-                                    "UPDATE rule_store SET rule_type = 'UNPARSED', dsl_json = ? WHERE id = ?",
-                                    (json.dumps(dsl_dict), rule_id),
-                                )
-                                conn.commit()
-                                output_data[field] = pl.Series([None] * total_rows)
-                            else:
-                                cond_expr = self.conditional_executor.evaluate(field, src_file, src_col, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
-                                output_data[field] = base_df.with_columns(cond_expr.alias(field))[field] if cond_expr is not None else pl.Series([None] * total_rows)
-
-                        else:  # MATRIX_LOOKUP and other fallback rules
-                            cond_expr = self.conditional_executor.evaluate(field, src_file, src_col, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
+                            cond_expr = self.conditional_executor.evaluate(field, src_file, clean_col_letter, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
+                            # Only populate if conditional evaluation succeeded; otherwise leave blank
                             output_data[field] = base_df.with_columns(cond_expr.alias(field))[field] if cond_expr is not None else pl.Series([None] * total_rows)
+
+                        else:
+                            # Strict fallback: leave completely blank
+                            output_data[field] = pl.Series([None] * total_rows)
 
                     if output_data:
                         res_df = pl.DataFrame(output_data)
                         if "_orig_row_idx" in base_df.columns:
                             res_df = res_df.with_columns(base_df["_orig_row_idx"])
-
                         if res_df.shape[0] > 0:
                             sheet_dfs.append(res_df)
 
-                # Combine all sections for current sheet, deduplicate & sort based on original input file order
+                # STEP D: HORIZONTALLY MERGE ALL SECTIONS FOR THE CURRENT SHEET
                 if sheet_dfs:
-                    final_sheet_df = pl.concat(sheet_dfs, how="diagonal_relaxed")
+                    final_sheet_df = sheet_dfs[0]
+                    for other_df in sheet_dfs[1:]:
+                        new_cols = [c for c in other_df.columns if c not in final_sheet_df.columns]
+                        if new_cols and "_orig_row_idx" in other_df.columns and "_orig_row_idx" in final_sheet_df.columns:
+                            final_sheet_df = final_sheet_df.join(
+                                other_df.select(["_orig_row_idx"] + new_cols),
+                                on="_orig_row_idx",
+                                how="left"
+                            )
 
                     if "_orig_row_idx" in final_sheet_df.columns:
-                        final_sheet_df = (
-                            final_sheet_df
-                            .unique(subset=["_orig_row_idx"], keep="last")
-                            .sort("_orig_row_idx")
-                            .drop("_orig_row_idx")
-                        )
+                        final_sheet_df = final_sheet_df.sort("_orig_row_idx").drop("_orig_row_idx")
 
                     sheet_clean = re.sub(r'[\\/*?:"<>|]', "_", current_sheet).strip().replace(" ", "_")
                     sheet_clean = re.sub(r"^_+", "", sheet_clean)
@@ -365,9 +266,8 @@ class TransformationBuilder:
                         f"{cu_id}_{sheet_clean}_processed_data.csv"
                         if not sheet_clean.startswith("(")
                         else f"{cu_id}{sheet_clean}_processed_data.csv"
-           )
+                    )
                     out_file = self.output_dir / filename
-
                     final_sheet_df.write_csv(out_file)
 
                     results.append(GenerateResult(
