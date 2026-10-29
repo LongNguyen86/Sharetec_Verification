@@ -162,20 +162,27 @@ def evaluate_matrix_rule(
     is_group_type = "grp" in tf_lower or "group" in tf_lower
 
     target_col_name = None
+    matrix_cols = list(matrix_df.columns)
+
     if is_group_type:
-        for c in ["Group Type", "dp-type.grp-type", "ln-type.grp-type", "Group"]:
-            if c in matrix_df.columns:
+        # Dynamically find column containing 'group' or 'grp' (case-insensitive)
+        for c in matrix_cols:
+            if re.search(r"\b(group|grp)\b", c, re.IGNORECASE):
                 target_col_name = c
                 break
-        if not target_col_name and len(matrix_df.columns) >= 9:
-            target_col_name = matrix_df.columns[8]
+        # Standard Sharetec 4-column layout fallback: Col I (index 8)
+        if not target_col_name and len(matrix_cols) >= 9:
+            target_col_name = matrix_cols[8]
     else:
-        for c in ["NEW Share Type", "NEW Loan Type", "NEW Type", "dp-type.type", "ln-type.type", "Type"]:
-            if c in matrix_df.columns:
+        # Dynamically find target type column (contains 'type' but not 'group' / 'programming')
+        for c in matrix_cols:
+            c_clean = c.lower()
+            if "type" in c_clean and "group" not in c_clean and "grp" not in c_clean and "logic" not in c_clean:
                 target_col_name = c
                 break
-        if not target_col_name and len(matrix_df.columns) >= 7:
-            target_col_name = matrix_df.columns[6]
+        # Standard Sharetec 4-column layout fallback: Col G (index 6)
+        if not target_col_name and len(matrix_cols) >= 7:
+            target_col_name = matrix_cols[6]
 
     expr = None
 

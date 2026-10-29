@@ -90,7 +90,6 @@ class TransformationBuilder:
                     base_cols = [f"{default_table_key}::col_{i}" for i in range(df_primary.shape[1])]
                     base_df = df_primary.rename(dict(zip(df_primary.columns, base_cols)))
 
-                    # Clean non-ASCII bytes, whitespace, and decimal artifacts from primary DataFrame
                     base_df = base_df.with_columns([
                         pl.col(c)
                         .cast(pl.Utf8)
@@ -101,7 +100,6 @@ class TransformationBuilder:
                         for c in base_df.columns
                     ])
 
-                    # Track row order index for horizontal section joining
                     base_df = base_df.with_columns(
                         pl.Series("_orig_row_idx", list(range(base_df.shape[0])))
                     )
@@ -200,7 +198,7 @@ class TransformationBuilder:
                                 except Exception as e:
                                     logger.warning(f"Join warning for [{sec_file}]: {e}")
 
-                    # STEP C: PROCESS FIELD TRANSFORMATIONS (READ-ONLY, NO DB MUTATIONS)
+                    # STEP C: PROCESS FIELD TRANSFORMATIONS
                     output_data = {}
                     cursor.execute(
                         "SELECT id, target_field, data_file, column_letter, rule_type, dsl_json, raw_notes, status FROM rule_store WHERE (cu_id = ? OR is_global = 1) AND sheet_name = ? AND section_name = ? AND target_field NOT LIKE '_SECTION_RULE_%' ORDER BY id ASC",
@@ -210,33 +208,52 @@ class TransformationBuilder:
                     total_rows = base_df.shape[0]
 
                     for rule_id, field, src_file, src_col, rule_type, dsl_json_str, raw_notes, rule_status in field_rules:
-                        dsl_dict = json.loads(dsl_json_str) if dsl_json_str else {}
-                        clean_col_letter = re.findall(r"[A-Za-z]{1,3}", src_col)[0] if src_col and re.findall(r"[A-Za-z]{1,3}", src_col) else src_col
+                        
+                        # Handle REJECTED rules: explicitly assign null string series
+                        if rule_status == "REJECTED":
+                            output_data[field] = pl.Series(field, [None] * total_rows, dtype=pl.Utf8)
+                            continue
 
-                        # STRICT REQUIREMENT: If rule is UNPARSED, NEEDS_REVIEW, or NO_MAPPING, leave completely blank
+                        dsl_dict = json.loads(dsl_json_str) if dsl_json_str else {}
+
+                        # Prioritize source column from DSL dict (supports QA overrides)
+                        effective_col = dsl_dict.get("source_column") or src_col
+                        effective_file = dsl_dict.get("source_file") or src_file
+                        
+                        # Handle QA override container
+                        if isinstance(dsl_dict, dict) and dsl_dict.get("type") == "qa_override":
+                            raw_override = str(dsl_dict.get("raw_override", "")).strip()
+                            m_direct = re.match(r"^(?:DIRECT\()?\s*(?:([A-Za-z0-9_]+)\.)?([A-Za-z]{1,3})\s*\)?$", raw_override, re.IGNORECASE)
+                            if m_direct:
+                                effective_file = m_direct.group(1) or effective_file
+                                effective_col = m_direct.group(2).upper()
+                                rule_type = "DIRECT"
+                                dsl_dict = {"source_file": effective_file, "source_column": effective_col}
+
+                        clean_col_letter = re.findall(r"[A-Za-z]{1,3}", str(effective_col))[0] if effective_col and re.findall(r"[A-Za-z]{1,3}", str(effective_col)) else str(effective_col)
+
+                        # Leave unparsed or review-pending fields completely blank
                         if (
                             rule_type in ("NO_MAPPING", "UNPARSED", "NEEDS_REVIEW")
                             or rule_status in ("NEEDS_REVIEW", "UNPARSED")
                             or dsl_dict.get("status") in ("NEEDS_REVIEW", "UNPARSED")
                         ):
-                            output_data[field] = pl.Series([None] * total_rows)
+                            output_data[field] = pl.Series(field, [None] * total_rows, dtype=pl.Utf8)
 
                         elif rule_type == "DIRECT":
-                            expr = self.direct_executor.evaluate(field, src_file, clean_col_letter, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
-                            output_data[field] = base_df.with_columns(expr.alias(field))[field] if expr is not None else pl.Series([None] * total_rows)
+                            expr = self.direct_executor.evaluate(field, effective_file, clean_col_letter, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
+                            output_data[field] = base_df.with_columns(expr.alias(field))[field] if expr is not None else pl.Series(field, [None] * total_rows, dtype=pl.Utf8)
 
                         elif rule_type == "CONSTANT":
-                            expr = self.constant_executor.evaluate(field, src_file, clean_col_letter, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
-                            output_data[field] = base_df.with_columns(expr.alias(field))[field] if expr is not None else pl.Series([None] * total_rows)
+                            expr = self.constant_executor.evaluate(field, effective_file, clean_col_letter, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
+                            output_data[field] = base_df.with_columns(expr.alias(field))[field] if expr is not None else pl.Series(field, [None] * total_rows, dtype=pl.Utf8)
 
                         elif rule_type == "CONDITIONAL":
-                            cond_expr = self.conditional_executor.evaluate(field, src_file, clean_col_letter, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
-                            # Only populate if conditional evaluation succeeded; otherwise leave blank
-                            output_data[field] = base_df.with_columns(cond_expr.alias(field))[field] if cond_expr is not None else pl.Series([None] * total_rows)
+                            cond_expr = self.conditional_executor.evaluate(field, effective_file, clean_col_letter, dsl_dict, raw_notes, base_df, default_table_key, sec_name=sec)
+                            output_data[field] = base_df.with_columns(cond_expr.alias(field))[field] if cond_expr is not None else pl.Series(field, [None] * total_rows, dtype=pl.Utf8)
 
                         else:
-                            # Strict fallback: leave completely blank
-                            output_data[field] = pl.Series([None] * total_rows)
+                            output_data[field] = pl.Series(field, [None] * total_rows, dtype=pl.Utf8)
 
                     if output_data:
                         res_df = pl.DataFrame(output_data)

@@ -19,23 +19,10 @@ from src.bsdc_engine.rules.dsl import (
 )
 from src.bsdc_engine.rules.store import RuleStore
 
-ENGLISH_STOP_WORDS = {
-    "A", "AN", "THE", "TO", "IN", "ON", "AT", "BY", "FOR", "WITH", "ABOUT",
-    "AGAINST", "BETWEEN", "INTO", "THROUGH", "DURING", "BEFORE", "AFTER",
-    "ABOVE", "BELOW", "FROM", "UP", "DOWN", "OF", "OFF", "OVER", "UNDER",
-    "AGAIN", "FURTHER", "THEN", "ONCE", "HERE", "THERE", "WHEN", "WHERE",
-    "WHY", "HOW", "ALL", "ANY", "BOTH", "EACH", "FEW", "MORE", "MOST",
-    "OTHER", "SOME", "SUCH", "NO", "NOR", "NOT", "ONLY", "OWN", "SAME",
-    "SO", "THAN", "TOO", "VERY", "S", "T", "CAN", "WILL", "JUST", "DON",
-    "SHOULD", "NOW", "AND", "OR", "IF", "IS", "IT", "AS", "USE", "SET",
-    "COL", "COLUMN", "ASSIGN", "CREATE", "LINK", "JOIN", "MATRIX", "LOOKUP"
-}
-
-# Narrative instruction keywords in action/then clauses that indicate complex logic requiring LLM parsing
-NARRATIVE_ACTION_KEYWORDS = [
-    "ADD", "BEGINNING", "STARTING", "EXAMPLE", "DIGIT", "NON MEMBER",
-    "MEMBER TYPE", "SUBSTRING", "EXTRACT", "CALCULATE", "SUM", "COUNT",
-    "INCREMENT", "LOOKUP", "WHERE", "AFTER", "BEFORE", "PREFIX", "SUFFIX"
+# Generic transformation verbs indicating narrative instructions that must route to LLM
+GENERIC_NARRATIVE_VERBS = [
+    "ADD", "CALCULATE", "SUM", "COUNT", "SUBSTRING", "EXTRACT", 
+    "INCREMENT", "LOOKUP", "WHERE", "PREFIX", "SUFFIX"
 ]
 
 
@@ -52,28 +39,40 @@ def clean_excel_text(text) -> str:
 
 
 def clean_action_val(val_str: str) -> str:
-    """Extract clean assigned target value, converting BLANK indicators to empty string."""
+    """Extract clean assigned target value, returning empty string for BLANK/NULL/DO NOT ASSIGN."""
     if not val_str:
         return ""
     s = val_str.strip()
+    s = re.sub(r"^THEN\s+", "", s, flags=re.IGNORECASE).strip()
     s = re.sub(r"^(ASSIGN|CREATE)\s+(ALL\s+)?", "", s, flags=re.IGNORECASE).strip()
     s = s.rstrip(";,.").strip()
-    if s.upper() in ["LEAVE BLANK", "BLANK", "NULL", "NONE", "''", '""']:
+
+    blank_indicators = [
+        "LEAVE BLANK", "BLANK", "NULL", "NONE", "''", '""',
+        "DO NOT ASSIGN", "DO NOT CREATE", "DO NOT MAP", "NOTHING"
+    ]
+    if s.upper() in blank_indicators:
         return ""
     if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
         s = s[1:-1].strip()
     s = s.rstrip(";,.").strip()
-    if s.upper() in ["LEAVE BLANK", "BLANK", "NULL", "NONE", "''", '""']:
+    if s.upper() in blank_indicators:
         return ""
     return s
 
 
 def is_narrative_action(action_str: str) -> bool:
-    """Check if the action/then clause contains natural language instructions that should be parsed by LLM."""
+    """Check if action clause requires LLM parsing."""
     if not action_str:
         return False
+    cleaned = clean_action_val(action_str)
+    if cleaned == "":
+        return False
+    words = action_str.strip().split()
+    if len(words) > 4:
+        return True
     act_upper = action_str.upper()
-    return any(re.search(r"\b" + re.escape(kw) + r"\b", act_upper) for kw in NARRATIVE_ACTION_KEYWORDS)
+    return any(re.search(r"\b" + re.escape(kw) + r"\b", act_upper) for kw in GENERIC_NARRATIVE_VERBS)
 
 
 def is_simple_constant(val_str: str) -> bool:
@@ -81,7 +80,7 @@ def is_simple_constant(val_str: str) -> bool:
     if not val_str:
         return True
     val_upper = val_str.upper()
-    if any(re.search(r"\b" + re.escape(kw) + r"\b", val_upper) for kw in NARRATIVE_ACTION_KEYWORDS):
+    if any(re.search(r"\b" + re.escape(kw) + r"\b", val_upper) for kw in GENERIC_NARRATIVE_VERBS):
         return False
     if "(" in val_str or ")" in val_str or len(val_str) > 40 or "=" in val_str:
         return False
@@ -89,33 +88,41 @@ def is_simple_constant(val_str: str) -> bool:
 
 
 def preprocess_notes(notes: str) -> str:
-    """Preprocess notes, fixing common typos and commas before action keywords."""
+    """Preprocess notes, fixing typos and inserting missing THEN keywords across action patterns."""
     s = notes.strip()
     s = re.sub(r"\bT\s+HEN\b", "THEN", s, flags=re.IGNORECASE)
     s = re.sub(r"\bI\s+F\b", "IF", s, flags=re.IGNORECASE)
     s = re.sub(r"\bAS\s+SIGN\b", "ASSIGN", s, flags=re.IGNORECASE)
 
+    action_pattern = r"(?:LEAVE\s+BLANK|DO\s+NOT\s+ASSIGN|DO\s+NOT\s+CREATE|ASSIGN|CREATE|SET)"
+
     s = re.sub(
-        r"(\bIF\b.*?)\s*,\s*(?:THEN\s+)?(LEAVE\s+BLANK|ASSIGN|CREATE|SET|NULL)\b",
+        rf"(\bIF\b.*?)\s*,\s*(?:THEN\s+)?({action_pattern})\b",
         r"\1 THEN \2",
         s,
         flags=re.IGNORECASE,
     )
 
     def insert_then(match):
-        if_prefix = match.group(1)
+        prefix = match.group(1)
         action = match.group(2)
-        if "THEN" not in if_prefix.upper():
-            return f"{if_prefix} THEN {action}"
+        if not re.search(r"\bTHEN\b", prefix, re.IGNORECASE):
+            return f"{prefix} THEN {action}"
         return match.group(0)
 
     s = re.sub(
-        r"(\bIF\b.*?)\s+\b(LEAVE\s+BLANK|ASSIGN|CREATE|SET|NULL)\b",
+        rf"(\bIF\b.*?)\s+\b({action_pattern})\b",
         insert_then,
         s,
         flags=re.IGNORECASE,
     )
     return s
+
+
+def strip_label_metadata(notes: str) -> str:
+    """Remove user-defined field label annotations such as 'LABEL: RANKING'."""
+    s = re.sub(r"\bLABEL\s*:\s*[^;\n\r\|]+", "", notes, flags=re.IGNORECASE).strip()
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def expand_shorthand_conditions(cond_str: str) -> str:
@@ -157,7 +164,6 @@ def parse_boolean_tree(raw_cond: str, default_col: str) -> list[list[dict]]:
             if not ap:
                 continue
 
-            # Compare two columns directly: COLUMN A = COLUMN B
             m_col_col = re.search(
                 r"\b(?:COLUMN|COL)\s+([A-Za-z0-9_]+)\s*(=|==|!=|<>)\s*(?:COLUMN|COL)\s+([A-Za-z0-9_]+)\b",
                 ap,
@@ -172,24 +178,26 @@ def parse_boolean_tree(raw_cond: str, default_col: str) -> list[list[dict]]:
                 })
                 continue
 
-            m_col = re.search(r"\b(?:COLUMN|COL)\s+([A-Za-z0-9_]+)\b", ap, re.IGNORECASE)
+            ap_normalized = re.sub(r"\bVALUE\b", f"COLUMN {default_col}", ap, flags=re.IGNORECASE)
+
+            m_col = re.search(r"\b(?:COLUMN|COL)\s+([A-Za-z0-9_]+)\b", ap_normalized, re.IGNORECASE)
             col_name = m_col.group(1).upper() if m_col else (default_col.upper() if default_col else "")
 
-            is_ne = any(kw in ap for kw in ["<>", "!="]) or re.search(r"\bNOT\b", ap, re.IGNORECASE)
+            is_ne = any(kw in ap_normalized for kw in ["<>", "!="]) or re.search(r"\bNOT\b", ap_normalized, re.IGNORECASE)
             op = "!=" if is_ne else "=="
 
             rhs = re.sub(
                 r"^\s*\b(?:COLUMN|COL)\s+[A-Za-z0-9_]+\s*(=|==|!=|<>|IN|IS)?\s*",
                 "",
-                ap,
+                ap_normalized,
                 flags=re.IGNORECASE,
             ).strip()
 
             if not rhs and not m_col and default_col:
-                if "NO " in ap.upper() or "BLANK" in ap.upper() or "EMPTY" in ap.upper():
+                if "NO " in ap_normalized.upper() or "BLANK" in ap_normalized.upper() or "EMPTY" in ap_normalized.upper():
                     rhs = "BLANK"
                 else:
-                    rhs = ap
+                    rhs = ap_normalized
 
             and_list.append({
                 "col": col_name,
@@ -270,16 +278,14 @@ def parse_section_rule(raw_notes: str) -> dict:
     }
 
 
-def parse_chained_ifs(notes: str, default_col: str) -> list[dict] | None:
-    """
-    Parse simple, structured IF-blocks into executable branches.
-    Returns None if any branch contains complex narrative instructions that should be handed to LLM.
-    """
+def parse_chained_ifs(notes: str, default_col: str) -> tuple[list[dict], list[dict]] | None:
+    """Parse if-blocks into value branches and modifiers."""
     s = preprocess_notes(notes)
     if_blocks = re.split(r"\bIF\s+", s, flags=re.IGNORECASE)
     if_blocks = [b.strip() for b in if_blocks if b.strip()]
 
-    parsed_branches = []
+    raw_value_branches = []
+    modifiers = []
 
     for block in if_blocks:
         then_split = re.split(r"\bTHEN\b", block, maxsplit=1, flags=re.IGNORECASE)
@@ -293,7 +299,31 @@ def parse_chained_ifs(notes: str, default_col: str) -> list[dict] | None:
         raw_then = else_split[0].strip()
         raw_else = else_split[1].strip() if len(else_split) > 1 else None
 
-        # Clean boundary: If the action clause contains narrative instructions, hand over to LLM
+        m_prepend = re.search(
+            r"(?:ASSIGN\s+)?(?:ADD|PREPEND|PREFIX\s+WITH)\s+[\"']?([^\"'\s,]+)[\"']?\s+(?:TO\s+THE\s+BEGINNING\s+OF)?",
+            raw_then,
+            re.IGNORECASE,
+        )
+        if m_prepend:
+            prefix = m_prepend.group(1)
+            m_ex = re.search(r"FOR\s+EXAMPLE\s+[\"']?([^\"'\s]+)[\"']?", raw_then, re.IGNORECASE)
+            example = m_ex.group(1) if m_ex else ""
+            delim = ""
+            if example and example.startswith(prefix):
+                rest = example[len(prefix):]
+                if rest and not rest[0].isalnum():
+                    delim = rest[0]
+            elif not prefix.endswith(",") and not prefix.endswith("-") and not prefix.endswith("_"):
+                delim = ","
+
+            modifiers.append({
+                "condition_tree": parse_boolean_tree(raw_cond, default_col),
+                "action": "PREPEND",
+                "val": f"{prefix}{delim}",
+                "raw_condition": raw_cond,
+            })
+            continue
+
         if is_narrative_action(raw_then) or (raw_else and is_narrative_action(raw_else)):
             return None
 
@@ -307,7 +337,7 @@ def parse_chained_ifs(notes: str, default_col: str) -> list[dict] | None:
             primary_if_col = condition_tree[0][0]["col"]
             primary_if_val = condition_tree[0][0]["val"]
 
-        parsed_branches.append({
+        raw_value_branches.append({
             "if_col": primary_if_col,
             "if_val": primary_if_val,
             "then_val": then_val,
@@ -316,22 +346,29 @@ def parse_chained_ifs(notes: str, default_col: str) -> list[dict] | None:
             "condition_tree": condition_tree,
         })
 
-    return parsed_branches
+    def get_branch_priority(branch: dict) -> int:
+        cond_upper = str(branch.get("raw_condition", "")).upper()
+        if re.search(r"\b(?:COLUMN|COL)\s+[A-Za-z0-9_]+\s*(=|==|!=|<>)\s*(?:COLUMN|COL)\s+[A-Za-z0-9_]+\b", cond_upper):
+            return 0
+        if any(kw in cond_upper for kw in ["BLANK", "NULL", "EMPTY"]):
+            return 2
+        return 1
+
+    sorted_branches = sorted(raw_value_branches, key=get_branch_priority)
+    return sorted_branches, modifiers
 
 
 def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
-    """
-    Parse notes to DSL:
-    - Pure, structured logic is auto-parsed deterministically.
-    - Narrative text, complex multi-step instructions, or unparseable patterns are cleanly routed to LLM.
-    """
+    """Parse notes to DSL dynamically and deterministically."""
     data_file = clean_excel_text(data_file)
     col = clean_excel_text(col)
     notes = clean_excel_text(notes)
-    notes_upper = notes.upper().strip()
+    
+    notes_stripped = strip_label_metadata(notes)
+    notes_upper = notes_stripped.upper().strip()
     col_upper = col.upper().strip()
 
-    # 1. NO_MAPPING: Empty column and empty notes
+    # 1. NO_MAPPING
     if not col_upper and not notes_upper:
         return {
             "rule_type": "NO_MAPPING",
@@ -340,15 +377,33 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
             "status": "AUTO_PARSED",
         }
 
-    # 2. Strict CONCAT: Standard explicit '+' expressions
-    target_concat_str = col if "+" in col else (notes if "+" in notes else "")
+    # 2. Handle 'IF VALUE = NULL DO NOT ASSIGN'
+    if col_upper and notes_upper in [
+        "IF VALUE = NULL DO NOT ASSIGN",
+        "IF VALUE = NULL THEN DO NOT ASSIGN",
+        "IF VALUE = NULL LEAVE BLANK",
+        "IF VALUE = NULL THEN LEAVE BLANK",
+        f"IF COLUMN {col_upper} = NULL DO NOT ASSIGN",
+        f"IF COLUMN {col_upper} = NULL THEN DO NOT ASSIGN",
+        f"IF COL {col_upper} = NULL DO NOT ASSIGN",
+        f"IF COL {col_upper} = NULL THEN DO NOT ASSIGN",
+    ]:
+        return {
+            "rule_type": "DIRECT",
+            "dsl_obj": DirectRuleDSL(source_file=data_file, source_column=col),
+            "dsl_readable": f"{data_file}.{col}" if data_file else f"COL_{col}",
+            "status": "AUTO_PARSED",
+        }
+
+    # 3. Strict CONCAT
+    target_concat_str = col if "+" in col else (notes_stripped if "+" in notes_stripped else "")
     if target_concat_str and not any(kw in notes_upper for kw in ["LINK", "JOIN", "MATRIX", "LOOKUP", "DECIMAL", "ELEMENT"]):
         parts = [p.strip() for p in target_concat_str.split("+")]
         valid_cols = []
         is_pure_concat = True
         for p in parts:
             p_clean = re.sub(r"^(COL|COLUMN)\s+", "", p, flags=re.IGNORECASE).strip().upper()
-            if re.match(r"^[A-Z]{1,2}$", p_clean) and p_clean not in ENGLISH_STOP_WORDS:
+            if re.match(r"^[A-Z]{1,3}$", p_clean):
                 valid_cols.append(p_clean)
             else:
                 is_pure_concat = False
@@ -362,9 +417,8 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
                 "status": "AUTO_PARSED",
             }
 
-    # 3. CONDITIONAL: Handle clean, structured IF ... THEN ... ELSE logic
+    # 4. CONDITIONAL
     if "IF " in notes_upper or "IF\n" in notes_upper or notes_upper.startswith("IF"):
-        # Reserve LLM parsing strictly for narrative cross-table queries or custom aggregations
         if any(kw in notes_upper for kw in ["LINK", "JOIN", "MATRIX", "DECIMAL", "ELEMENT", "LOOKUP", "SUM(", "COUNT("]):
             return {
                 "rule_type": "UNPARSED",
@@ -373,46 +427,61 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
                 "status": "NEEDS_REVIEW",
             }
 
-        branches = parse_chained_ifs(notes, default_col=col)
-        # If branches is None, it means narrative text was detected -> cleanly delegate to LLM
-        if branches is not None and len(branches) > 0:
-            branch_models = [BranchModel(**b) for b in branches]
-            cond_dsl = ConditionalRuleDSL(
-                if_col=branch_models[0].if_col if branch_models else col,
-                if_val=branch_models[0].if_val if branch_models else "",
-                then_val=branch_models[0].then_val if branch_models else "",
-                else_val=branch_models[0].else_val if branch_models else None,
-                branches=branch_models,
-                raw_condition=notes,
-            )
+        parsed_result = parse_chained_ifs(notes_stripped, default_col=col)
+        if parsed_result is not None:
+            branches, modifiers = parsed_result
+            if branches or modifiers:
+                branch_models = [BranchModel(**b) for b in branches]
+                cond_dsl = ConditionalRuleDSL(
+                    if_col=branch_models[0].if_col if branch_models else col,
+                    if_val=branch_models[0].if_val if branch_models else "",
+                    then_val=branch_models[0].then_val if branch_models else "",
+                    else_val=branch_models[0].else_val if branch_models else None,
+                    branches=branch_models,
+                    raw_condition=notes_stripped,
+                )
 
-            # Build human-readable representation for QA review
-            if len(branch_models) == 1:
-                b = branch_models[0]
-                readable = f"IF {b.raw_condition} THEN '{b.then_val}'"
-                if b.else_val:
-                    readable += f" ELSE '{b.else_val}'"
-            else:
-                readable = f"IF ({len(branch_models)} CONDITIONS)"
+                dsl_payload = cond_dsl.model_dump()
+                if modifiers:
+                    dsl_payload["modifiers"] = modifiers
 
-            return {
-                "rule_type": "CONDITIONAL",
-                "dsl_obj": cond_dsl,
-                "dsl_readable": readable,
-                "status": "AUTO_PARSED",
-            }
-        else:
-            return {
-                "rule_type": "UNPARSED",
-                "dsl_obj": UnparsedRuleDSL(raw_notes=notes),
-                "dsl_readable": "NEEDS_LLM_PARSING",
-                "status": "NEEDS_REVIEW",
-            }
+                # Output each branch and modifier line by line
+                readable_lines = []
+                for b in branch_models:
+                    line = f"IF {b.raw_condition} THEN '{b.then_val}'"
+                    if b.else_val:
+                        line += f" ELSE '{b.else_val}'"
+                    readable_lines.append(line)
 
-    # 4. MATRIX_LOOKUP: Standard lookup references
+                for mod in modifiers:
+                    readable_lines.append(
+                        f"[{mod.get('action', 'PREPEND')}] IF {mod.get('raw_condition')} THEN '{mod.get('val')}'"
+                    )
+
+                readable = "\n".join(readable_lines)
+
+                class DynamicDSLWrapper:
+                    def __init__(self, data): self.data = data
+                    def model_dump_json(self): return json.dumps(self.data)
+
+                return {
+                    "rule_type": "CONDITIONAL",
+                    "dsl_obj": DynamicDSLWrapper(dsl_payload),
+                    "dsl_readable": readable,
+                    "status": "AUTO_PARSED",
+                }
+
+        return {
+            "rule_type": "UNPARSED",
+            "dsl_obj": UnparsedRuleDSL(raw_notes=notes),
+            "dsl_readable": "NEEDS_LLM_PARSING",
+            "status": "NEEDS_REVIEW",
+        }
+
+    # 5. MATRIX_LOOKUP
     if any(k in notes_upper for k in ["MATRIX", "LOOKUP"]):
         if not any(kw in notes_upper for kw in ["LINK", "JOIN", "DECIMAL", "ELEMENT"]):
-            match = re.search(r"ASSIGN\s+([A-Za-z0-9_\-\.]+)", notes, re.IGNORECASE)
+            match = re.search(r"ASSIGN\s+([A-Za-z0-9_\-\.]+)", notes_stripped, re.IGNORECASE)
             ref = match.group(1) if match else "MATRIX_LOOKUP"
             matrix_dsl = MatrixLookupRuleDSL(target_ref=ref, source_file=data_file, source_column=col, raw_notes=notes)
             return {
@@ -422,9 +491,10 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
                 "status": "AUTO_PARSED",
             }
 
-    # 5. ASSIGN / CREATE: Simple literals are auto-parsed, narrative instructions go to LLM
-    if notes_upper.startswith("ASSIGN") or notes_upper.startswith("CREATE"):
-        val = clean_action_val(notes)
+    # 6. CONSTANT
+    if notes_upper.startswith("ASSIGN") or notes_upper.startswith("CREATE") or notes_upper.startswith("CONST"):
+        m_func = re.match(r"^(?:CONSTANT|CONST)\s*\(\s*['\"]?(.*?)['\"]?\s*\)$", notes_stripped, re.IGNORECASE)
+        val = m_func.group(1).strip() if m_func else clean_action_val(notes_stripped)
         is_field_ref = bool(re.match(r"^[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+$", val, re.IGNORECASE))
 
         if is_field_ref or not is_simple_constant(val):
@@ -442,7 +512,7 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
                 "status": "AUTO_PARSED",
             }
 
-    # 6. DIRECT: Standard column mapping without notes
+    # 7. DIRECT
     if col_upper and not notes_upper:
         return {
             "rule_type": "DIRECT",
@@ -451,7 +521,7 @@ def parse_notes_to_dsl(data_file: str, col: str, notes: str) -> dict:
             "status": "AUTO_PARSED",
         }
 
-    # 7. Fallback: Everything else goes to LLM
+    # 8. Fallback
     return {
         "rule_type": "UNPARSED",
         "dsl_obj": UnparsedRuleDSL(raw_notes=notes),
@@ -473,7 +543,9 @@ def process_mapping_sheet(
         "no_mapping": 0,
     }
 
-    current_section = f"{sheet_name} - General"
+    # 100% Dynamic Hierarchical Tracking (Zero Hardcoding)
+    root_section = f"{sheet_name} - General"
+    sub_category = ""
     active_data_file = ""
     section_rule_counter = 0
 
@@ -491,6 +563,7 @@ def process_mapping_sheet(
 
         row_str = " | ".join(row_vals_clean)
 
+        # Dynamic header detector across all Excel structures
         row_vals_lower = [clean_excel_text(v).lower() for v in row.values]
         if "field" in row_vals_lower and any(
             "notes" in v or "additional" in v for v in row_vals_lower
@@ -512,7 +585,13 @@ def process_mapping_sheet(
             if n_found is not None: notes_col_idx = n_found
             continue
 
-        if any(
+        # Extract target field value
+        target_field = clean_excel_text(row.iloc[field_col_idx]) if len(row) > field_col_idx else ""
+        is_target_field_empty = (not target_field or target_field.lower() in ["nan", "none", "field", "label"])
+
+        # PURE SECTION RULE CHECK: ONLY valid if the row does NOT contain a data field
+        # Prevents normal data fields (e.g. YTD Dividend Amount) from being swallowed as section rules
+        if is_target_field_empty and any(
             kw in row_str.upper()
             for kw in ["ONLY CONSIDERED", "ONLY CREATE", "DO NOT CREATE", "LINK "]
         ):
@@ -522,6 +601,14 @@ def process_mapping_sheet(
             if sec_dsl_obj.filter_condition or sec_dsl_obj.join_rule:
                 section_rule_counter += 1
                 sec_target_field = f"_SECTION_RULE_{section_rule_counter}"
+                
+                # If banner text exists in the first cell, capture it as sub-category
+                cand_sub = clean_excel_text(row.iloc[0]) if len(row) > 0 else ""
+                if cand_sub and cand_sub.lower() not in ["nan", "none", "field", "label"]:
+                    sub_category = cand_sub
+
+                effective_section = f"{root_section} - {sub_category}" if sub_category else root_section
+
                 cursor.execute(
                     """
                     INSERT INTO rule_store 
@@ -529,7 +616,7 @@ def process_mapping_sheet(
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        cu_id, sheet_name, current_section, sec_target_field, row_str,
+                        cu_id, sheet_name, effective_section, sec_target_field, row_str,
                         "", "", parsed_sec["rule_type"], sec_dsl_obj.model_dump_json(),
                         parsed_sec["dsl_readable"], parsed_sec["status"], "SYSTEM",
                     ),
@@ -537,26 +624,34 @@ def process_mapping_sheet(
                 stats["section_rules"] += 1
                 continue
 
-        target_field = clean_excel_text(row.iloc[field_col_idx]) if len(row) > field_col_idx else ""
-
-        if not target_field or target_field.lower() in ["nan", "none", "field", "label"]:
+        # SECTION TITLE DETECTION: Strictly when target_field is empty
+        if is_target_field_empty:
             cand_title = clean_excel_text(row.iloc[0]) if len(row) > 0 else ""
             if not cand_title and row_vals_clean:
                 cand_title = row_vals_clean[0]
 
             cand_lower = cand_title.lower()
             if cand_title and not any(kw in cand_lower for kw in ["label", "field", "notes", "data file", "converted"]):
-                if len(cand_title) < 120:
-                    current_section = cand_title
+                # Generic structural rule:
+                # If a row has only 1 non-empty cell across the entire sheet row, or contains delimiter ' - ',
+                # and appears before a new header block -> It is a Root Section / Entity Table
+                non_empty_cells_count = len(row_vals_clean)
+                if non_empty_cells_count == 1 and (" - " in cand_title or len(cand_title.split()) >= 3):
+                    root_section = cand_title
+                    sub_category = ""
                     active_data_file = ""
                     section_rule_counter = 0
-                    print(f"Scanning Data Section: [{current_section}]")
+                    print(f"--> [Root Section]: [{root_section}]")
+                else:
+                    sub_category = cand_title
+                    print(f"    --> [Sub Category]: [{sub_category}] in [{root_section}]")
             continue
 
         raw_data_file = clean_excel_text(row.iloc[data_file_col_idx]) if len(row) > data_file_col_idx else ""
         col = clean_excel_text(row.iloc[col_letter_idx]) if len(row) > col_letter_idx else ""
         raw_notes = clean_excel_text(row.iloc[notes_col_idx]) if len(row) > notes_col_idx else ""
 
+        # Inherit active data file within the same section block
         if raw_data_file and raw_data_file.lower() not in ["nan", "none"]:
             active_data_file = raw_data_file
         data_file = active_data_file
@@ -571,6 +666,9 @@ def process_mapping_sheet(
         parsed_res = parse_notes_to_dsl(data_file, col, raw_notes)
         rule_dsl_obj = parsed_res["dsl_obj"]
 
+        # Deterministic Section Path preventing cross-table key collisions
+        effective_section = f"{root_section} - {sub_category}" if sub_category else root_section
+
         cursor.execute(
             """
             INSERT OR REPLACE INTO rule_store 
@@ -578,7 +676,7 @@ def process_mapping_sheet(
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                cu_id, sheet_name, current_section, target_field, raw_notes,
+                cu_id, sheet_name, effective_section, target_field, raw_notes,
                 data_file, col, parsed_res["rule_type"], rule_dsl_obj.model_dump_json(),
                 parsed_res["dsl_readable"], parsed_res["status"], "SYSTEM",
             ),
